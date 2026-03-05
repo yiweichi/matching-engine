@@ -154,11 +154,7 @@ impl OrderBook {
 
             self.fill_at_level(Side::Buy, best_ask, order.id, remaining, fills);
 
-            if self
-                .asks
-                .get(&best_ask)
-                .is_none_or(|l| l.orders.is_empty())
-            {
+            if self.asks.get(&best_ask).is_none_or(|l| l.orders.is_empty()) {
                 self.asks.remove(&best_ask);
             }
         }
@@ -179,11 +175,7 @@ impl OrderBook {
 
             self.fill_at_level(Side::Sell, best_bid, order.id, remaining, fills);
 
-            if self
-                .bids
-                .get(&best_bid)
-                .is_none_or(|l| l.orders.is_empty())
-            {
+            if self.bids.get(&best_bid).is_none_or(|l| l.orders.is_empty()) {
                 self.bids.remove(&best_bid);
             }
         }

@@ -35,7 +35,11 @@ fn bench_add_passive(c: &mut Criterion) {
         let mut fills = Vec::new();
         let mut id = 1u64;
         b.iter(|| {
-            let side = if id.is_multiple_of(2) { Side::Buy } else { Side::Sell };
+            let side = if id.is_multiple_of(2) {
+                Side::Buy
+            } else {
+                Side::Sell
+            };
             let price = if side == Side::Buy { 9900 } else { 10100 };
             book.add_order(
                 Order {
@@ -58,7 +62,11 @@ fn bench_aggressive_fill(c: &mut Criterion) {
         let (mut book, mut id) = seed_book(10_000);
         let mut fills = Vec::with_capacity(4);
         b.iter(|| {
-            let side = if id.is_multiple_of(2) { Side::Buy } else { Side::Sell };
+            let side = if id.is_multiple_of(2) {
+                Side::Buy
+            } else {
+                Side::Sell
+            };
             let price = if side == Side::Buy { 11_000 } else { 9_000 };
             fills.clear();
             book.add_order(
@@ -104,7 +112,11 @@ fn bench_market_order(c: &mut Criterion) {
         let (mut book, mut id) = seed_book(10_000);
         let mut fills = Vec::with_capacity(16);
         b.iter(|| {
-            let side = if id.is_multiple_of(2) { Side::Buy } else { Side::Sell };
+            let side = if id.is_multiple_of(2) {
+                Side::Buy
+            } else {
+                Side::Sell
+            };
             fills.clear();
             book.add_order(
                 Order {
