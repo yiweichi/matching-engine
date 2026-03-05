@@ -1,134 +1,53 @@
+mod bench;
+
 use std::time::Instant;
 
-use matching_engine::{Order, OrderBook, OrderType, Side};
-
-const NUM_SEED_ORDERS: u64 = 100_000;
-const NUM_AGGRESSIVE: u64 = 1_000_000;
-const MID_PRICE: u64 = 10_000;
-const HALF_SPREAD: u64 = 50;
+use bench::harness::*;
+use bench::scenarios;
 
 fn main() {
-    println!("=== Matching Engine Benchmark ===\n");
+    let mut r = Reporter::new();
 
-    let mut book = OrderBook::with_capacity(NUM_SEED_ORDERS as usize);
-    let mut fills = Vec::with_capacity(64);
-    let mut id: u64 = 1;
+    r.header("=== Matching Engine Latency Benchmark ===");
+    r.header(&format!("    warmup={WARMUP}  iters={ITERS}  sweep_iters={SWEEP_ITERS}"));
 
-    // ── Phase 1: Seed the book with passive limit orders ────────
+    let t0 = Instant::now();
 
-    let start = Instant::now();
-    for i in 0..NUM_SEED_ORDERS {
-        let (side, price) = if i % 2 == 0 {
-            (Side::Buy, MID_PRICE - HALF_SPREAD - (i % 200))
-        } else {
-            (Side::Sell, MID_PRICE + HALF_SPREAD + (i % 200))
-        };
-
-        book.add_order(
-            Order {
-                id,
-                side,
-                price,
-                qty: 10,
-                order_type: OrderType::Limit,
-            },
-            &mut fills,
-        );
-        fills.clear();
-        id += 1;
+    r.section("Passive Insert");
+    for &d in &[0u64, 100, 10_000, 100_000] {
+        r.row(&format!("depth={}", fmt_depth(d)), &scenarios::passive_insert(d));
     }
-    let seed_elapsed = start.elapsed();
-    println!(
-        "Seeded {} passive orders in {:.2?}  ({:.0} orders/sec)",
-        NUM_SEED_ORDERS,
-        seed_elapsed,
-        NUM_SEED_ORDERS as f64 / seed_elapsed.as_secs_f64()
-    );
-    println!(
-        "Book depth: {} orders | best bid={:?} best ask={:?} spread={:?}\n",
-        book.len(),
-        book.best_bid(),
-        book.best_ask(),
-        book.spread()
-    );
 
-    // ── Phase 2: Fire aggressive limit orders that cross the spread ─
-
-    let mut total_fills: u64 = 0;
-    let start = Instant::now();
-    for i in 0..NUM_AGGRESSIVE {
-        let (side, price) = if i % 2 == 0 {
-            (Side::Buy, MID_PRICE + HALF_SPREAD + 200)
-        } else {
-            (Side::Sell, MID_PRICE - HALF_SPREAD - 200)
-        };
-
-        fills.clear();
-        book.add_order(
-            Order {
-                id,
-                side,
-                price,
-                qty: 1,
-                order_type: OrderType::Limit,
-            },
-            &mut fills,
-        );
-        total_fills += fills.len() as u64;
-        id += 1;
+    r.section("Aggressive Fill (1 lot)");
+    for &d in &[100u64, 10_000, 100_000] {
+        r.row(&format!("depth={}", fmt_depth(d)), &scenarios::aggressive_fill(d));
     }
-    let aggr_elapsed = start.elapsed();
-    println!(
-        "Processed {} aggressive orders in {:.2?}  ({:.0} orders/sec)",
-        NUM_AGGRESSIVE,
-        aggr_elapsed,
-        NUM_AGGRESSIVE as f64 / aggr_elapsed.as_secs_f64()
-    );
-    println!(
-        "  avg latency: {:.0} ns/order",
-        aggr_elapsed.as_nanos() as f64 / NUM_AGGRESSIVE as f64
-    );
-    println!("  total fills: {}", total_fills);
-    println!(
-        "  book depth after: {} orders\n",
-        book.len()
-    );
 
-    // ── Phase 3: Cancellations (re-seed then cancel) ──────────
-
-    let cancel_n: u64 = 100_000;
-    for i in 0..cancel_n {
-        let (side, price) = if i % 2 == 0 {
-            (Side::Buy, MID_PRICE - HALF_SPREAD - (i % 200))
-        } else {
-            (Side::Sell, MID_PRICE + HALF_SPREAD + (i % 200))
-        };
-        fills.clear();
-        book.add_order(
-            Order { id, side, price, qty: 10, order_type: OrderType::Limit },
-            &mut fills,
-        );
-        id += 1;
+    r.section("Multi-Level Sweep");
+    for &l in &[1u64, 5, 10, 50] {
+        r.row(&format!("{} levels", l), &scenarios::multi_level_sweep(l));
     }
-    let cancel_start_id = id - cancel_n;
 
-    let start = Instant::now();
-    let mut cancelled = 0u64;
-    for oid in cancel_start_id..id {
-        if book.cancel(oid) {
-            cancelled += 1;
-        }
+    r.section("Market Order (1 lot)");
+    for &d in &[100u64, 10_000, 100_000] {
+        r.row(&format!("depth={}", fmt_depth(d)), &scenarios::market_order(d));
     }
-    let cancel_elapsed = start.elapsed();
-    println!(
-        "Cancelled {} orders in {:.2?}  ({:.0} cancels/sec)",
-        cancelled,
-        cancel_elapsed,
-        cancelled as f64 / cancel_elapsed.as_secs_f64()
-    );
-    println!(
-        "  avg latency: {:.0} ns/cancel",
-        cancel_elapsed.as_nanos() as f64 / cancelled.max(1) as f64
-    );
-    println!("  book depth after: {}", book.len());
+
+    r.section("Cancel");
+    for &d in &[100u64, 10_000, 100_000] {
+        r.row(&format!("depth={}", fmt_depth(d)), &scenarios::cancel(d));
+    }
+
+    r.section("Cancel Hot Level (single price)");
+    for &n in &[10u64, 100, 1_000, 10_000] {
+        r.row(&format!("{} orders/level", n), &scenarios::cancel_hot_level(n));
+    }
+
+    r.section("Mixed Workload (65/25/10)");
+    for &d in &[100u64, 10_000, 100_000] {
+        r.row(&format!("depth={}", fmt_depth(d)), &scenarios::mixed_workload(d));
+    }
+
+    r.footer(&format!("\n  Total benchmark time: {:.2?}", t0.elapsed()));
+    r.save();
 }

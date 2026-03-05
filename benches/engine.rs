@@ -68,7 +68,7 @@ fn bench_aggressive_fill(c: &mut Criterion) {
 
 fn bench_cancel(c: &mut Criterion) {
     c.bench_function("cancel_order", |b| {
-        let (mut book, next_id) = seed_book(50_000);
+        let (mut book, _next_id) = seed_book(50_000);
         let mut cancel_id = 1u64;
         b.iter(|| {
             if !book.cancel(black_box(cancel_id)) {
