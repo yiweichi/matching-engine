@@ -37,13 +37,17 @@ impl Reporter {
     }
 
     pub fn section(&mut self, title: &str) {
-        let pad = 80usize.saturating_sub(title.len() + 4);
+        let inner_w: usize = 88; // separator dashes (after 2-space indent)
+        let title_w: usize = inner_w + 6; // title bar is widest
+        let title_prefix = format!("── {} (ns) ", title);
+        let title_bar = format!(
+            "{}{}", title_prefix, "─".repeat(title_w.saturating_sub(title_prefix.len()))
+        );
         let line = format!(
-            "\n── {} {}\n  {:<22} {:>8} {:>8} {:>8} {:>8} {:>8} {:>8}\n  {}",
-            title,
-            "─".repeat(pad),
+            "\n{}\n  {:<22} {:>10} {:>10} {:>10} {:>10} {:>10} {:>10}\n  {}",
+            title_bar,
             "", "p50", "p99", "p99.9", "p99.99", "min", "max",
-            "─".repeat(70),
+            "─".repeat(inner_w),
         );
         println!("{line}");
         self.output.push_str(&line);
@@ -52,7 +56,7 @@ impl Reporter {
 
     pub fn row(&mut self, label: &str, hist: &Histogram<u64>) {
         let line = format!(
-            "  {:<22} {:>8} {:>8} {:>8} {:>8} {:>8} {:>8}",
+            "  {:<22} {:>10} {:>10} {:>10} {:>10} {:>10} {:>10}",
             label,
             fmt_ns(hist.value_at_percentile(50.0)),
             fmt_ns(hist.value_at_percentile(99.0)),
@@ -116,14 +120,17 @@ pub fn new_hist() -> Histogram<u64> {
     Histogram::<u64>::new_with_bounds(1, 1_000_000_000, 3).unwrap()
 }
 
-pub fn fmt_ns(ns: u64) -> String {
-    if ns >= 100_000 {
-        format!("{:.0}us", ns as f64 / 1_000.0)
-    } else if ns >= 10_000 {
-        format!("{:.1}us", ns as f64 / 1_000.0)
-    } else {
-        format!("{}ns", ns)
+/// Format nanoseconds with comma grouping: 1,234,567
+fn fmt_ns(ns: u64) -> String {
+    let s = ns.to_string();
+    let mut result = String::with_capacity(s.len() + s.len() / 3);
+    for (i, c) in s.chars().rev().enumerate() {
+        if i > 0 && i % 3 == 0 {
+            result.push(',');
+        }
+        result.push(c);
     }
+    result.chars().rev().collect()
 }
 
 pub fn fmt_depth(n: u64) -> String {

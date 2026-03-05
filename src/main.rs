@@ -43,7 +43,7 @@ fn main() {
         r.row(&format!("{} orders/level", n), &scenarios::cancel_hot_level(n));
     }
 
-    r.section("Mixed Workload (65/25/10)");
+    r.section("Mixed Workload (65% cancel, 25% insert, 10% fill)");
     for &d in &[100u64, 10_000, 100_000] {
         r.row(&format!("depth={}", fmt_depth(d)), &scenarios::mixed_workload(d));
     }
