@@ -15,7 +15,13 @@ fn seed_one_side(book: &mut OrderBook, side: Side, n: u64, id: &mut u64, fills: 
         };
         fills.clear();
         book.add_order(
-            Order { id: *id, side, price, qty: 10, order_type: OrderType::Limit },
+            Order {
+                id: *id,
+                side,
+                price,
+                qty: 10,
+                order_type: OrderType::Limit,
+            },
             fills,
         );
         *id += 1;
@@ -31,7 +37,13 @@ fn seed_both(book: &mut OrderBook, n: u64, id: &mut u64, fills: &mut Vec<Fill>) 
         };
         fills.clear();
         book.add_order(
-            Order { id: *id, side, price, qty: 10, order_type: OrderType::Limit },
+            Order {
+                id: *id,
+                side,
+                price,
+                qty: 10,
+                order_type: OrderType::Limit,
+            },
             fills,
         );
         *id += 1;
@@ -76,14 +88,20 @@ pub fn passive_insert(depth: u64) -> Histogram<u64> {
     seed_both(&mut book, depth, &mut id, &mut fills);
 
     timed_loop(WARMUP, ITERS, || {
-        let (side, price) = if id % 2 == 0 {
+        let (side, price) = if id.is_multiple_of(2) {
             (Side::Buy, MID - SPREAD - 200 - (id % 100))
         } else {
             (Side::Sell, MID + SPREAD + 200 + (id % 100))
         };
         fills.clear();
         book.add_order(
-            Order { id, side, price, qty: 10, order_type: OrderType::Limit },
+            Order {
+                id,
+                side,
+                price,
+                qty: 10,
+                order_type: OrderType::Limit,
+            },
             &mut fills,
         );
         id += 1;
@@ -103,7 +121,13 @@ pub fn aggressive_fill(depth: u64) -> Histogram<u64> {
         }
         fills.clear();
         book.add_order(
-            Order { id, side: Side::Buy, price: MID + SPREAD + 200, qty: 1, order_type: OrderType::Limit },
+            Order {
+                id,
+                side: Side::Buy,
+                price: MID + SPREAD + 200,
+                qty: 1,
+                order_type: OrderType::Limit,
+            },
             &mut fills,
         );
         id += 1;
@@ -119,14 +143,26 @@ pub fn multi_level_sweep(num_levels: u64) -> Histogram<u64> {
         for l in 0..num_levels {
             fills.clear();
             book.add_order(
-                Order { id, side: Side::Sell, price: MID + 1 + l, qty: 10, order_type: OrderType::Limit },
+                Order {
+                    id,
+                    side: Side::Sell,
+                    price: MID + 1 + l,
+                    qty: 10,
+                    order_type: OrderType::Limit,
+                },
                 &mut fills,
             );
             id += 1;
         }
         fills.clear();
         book.add_order(
-            Order { id, side: Side::Buy, price: MID + num_levels, qty: num_levels * 10, order_type: OrderType::Limit },
+            Order {
+                id,
+                side: Side::Buy,
+                price: MID + num_levels,
+                qty: num_levels * 10,
+                order_type: OrderType::Limit,
+            },
             &mut fills,
         );
         id += 1;
@@ -146,7 +182,13 @@ pub fn market_order(depth: u64) -> Histogram<u64> {
         }
         fills.clear();
         book.add_order(
-            Order { id, side: Side::Buy, price: 0, qty: 1, order_type: OrderType::Market },
+            Order {
+                id,
+                side: Side::Buy,
+                price: 0,
+                qty: 1,
+                order_type: OrderType::Market,
+            },
             &mut fills,
         );
         id += 1;
@@ -180,7 +222,13 @@ pub fn cancel_hot_level(orders_per_level: u64) -> Histogram<u64> {
     for _ in 0..orders_per_level {
         fills.clear();
         book.add_order(
-            Order { id, side: Side::Sell, price, qty: 10, order_type: OrderType::Limit },
+            Order {
+                id,
+                side: Side::Sell,
+                price,
+                qty: 10,
+                order_type: OrderType::Limit,
+            },
             &mut fills,
         );
         id += 1;
@@ -194,7 +242,13 @@ pub fn cancel_hot_level(orders_per_level: u64) -> Histogram<u64> {
             for _ in 0..orders_per_level {
                 fills.clear();
                 book.add_order(
-                    Order { id, side: Side::Sell, price, qty: 10, order_type: OrderType::Limit },
+                    Order {
+                        id,
+                        side: Side::Sell,
+                        price,
+                        qty: 10,
+                        order_type: OrderType::Limit,
+                    },
                     &mut fills,
                 );
                 id += 1;
@@ -226,14 +280,20 @@ pub fn mixed_workload(depth: u64) -> Histogram<u64> {
                 ring_idx += 1;
             }
         } else if roll < 18 {
-            let (side, price) = if id % 2 == 0 {
+            let (side, price) = if id.is_multiple_of(2) {
                 (Side::Buy, MID - SPREAD - 200 - (id % 100))
             } else {
                 (Side::Sell, MID + SPREAD + 200 + (id % 100))
             };
             fills.clear();
             book.add_order(
-                Order { id, side, price, qty: 10, order_type: OrderType::Limit },
+                Order {
+                    id,
+                    side,
+                    price,
+                    qty: 10,
+                    order_type: OrderType::Limit,
+                },
                 &mut fills,
             );
             if cancel_ring.len() < ring_cap {
@@ -242,14 +302,20 @@ pub fn mixed_workload(depth: u64) -> Histogram<u64> {
                 cancel_ring[ring_idx % ring_cap] = id;
             }
         } else {
-            let (side, price) = if id % 2 == 0 {
+            let (side, price) = if id.is_multiple_of(2) {
                 (Side::Buy, MID + SPREAD + 200)
             } else {
                 (Side::Sell, MID - SPREAD - 200)
             };
             fills.clear();
             book.add_order(
-                Order { id, side, price, qty: 1, order_type: OrderType::Limit },
+                Order {
+                    id,
+                    side,
+                    price,
+                    qty: 1,
+                    order_type: OrderType::Limit,
+                },
                 &mut fills,
             );
         }

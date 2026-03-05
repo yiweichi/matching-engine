@@ -27,7 +27,9 @@ pub struct Reporter {
 
 impl Reporter {
     pub fn new() -> Self {
-        Self { output: String::new() }
+        Self {
+            output: String::new(),
+        }
     }
 
     pub fn header(&mut self, text: &str) {
@@ -41,12 +43,20 @@ impl Reporter {
         let title_w: usize = inner_w + 6; // title bar is widest
         let title_prefix = format!("── {} (ns) ", title);
         let title_bar = format!(
-            "{}{}", title_prefix, "─".repeat(title_w.saturating_sub(title_prefix.len()))
+            "{}{}",
+            title_prefix,
+            "─".repeat(title_w.saturating_sub(title_prefix.len()))
         );
         let line = format!(
             "\n{}\n  {:<22} {:>10} {:>10} {:>10} {:>10} {:>10} {:>10}\n  {}",
             title_bar,
-            "", "p50", "p99", "p99.9", "p99.99", "min", "max",
+            "",
+            "p50",
+            "p99",
+            "p99.9",
+            "p99.99",
+            "min",
+            "max",
             "─".repeat(inner_w),
         );
         println!("{line}");
@@ -142,4 +152,3 @@ pub fn fmt_depth(n: u64) -> String {
         n.to_string()
     }
 }
-
