@@ -14,7 +14,13 @@ fn seed_book(n: u64) -> (OrderBook, u64) {
             (Side::Sell, mid + 50 + (i % 200))
         };
         book.add_order(
-            Order { id, side, price, qty: 10, order_type: OrderType::Limit },
+            Order {
+                id,
+                side,
+                price,
+                qty: 10,
+                order_type: OrderType::Limit,
+            },
             &mut fills,
         );
         fills.clear();
@@ -29,10 +35,16 @@ fn bench_add_passive(c: &mut Criterion) {
         let mut fills = Vec::new();
         let mut id = 1u64;
         b.iter(|| {
-            let side = if id % 2 == 0 { Side::Buy } else { Side::Sell };
+            let side = if id.is_multiple_of(2) { Side::Buy } else { Side::Sell };
             let price = if side == Side::Buy { 9900 } else { 10100 };
             book.add_order(
-                Order { id, side, price, qty: 10, order_type: OrderType::Limit },
+                Order {
+                    id,
+                    side,
+                    price,
+                    qty: 10,
+                    order_type: OrderType::Limit,
+                },
                 &mut fills,
             );
             fills.clear();
@@ -46,11 +58,17 @@ fn bench_aggressive_fill(c: &mut Criterion) {
         let (mut book, mut id) = seed_book(10_000);
         let mut fills = Vec::with_capacity(4);
         b.iter(|| {
-            let side = if id % 2 == 0 { Side::Buy } else { Side::Sell };
+            let side = if id.is_multiple_of(2) { Side::Buy } else { Side::Sell };
             let price = if side == Side::Buy { 11_000 } else { 9_000 };
             fills.clear();
             book.add_order(
-                Order { id, side, price, qty: 1, order_type: OrderType::Limit },
+                Order {
+                    id,
+                    side,
+                    price,
+                    qty: 1,
+                    order_type: OrderType::Limit,
+                },
                 &mut fills,
             );
             black_box(&fills);
@@ -86,10 +104,16 @@ fn bench_market_order(c: &mut Criterion) {
         let (mut book, mut id) = seed_book(10_000);
         let mut fills = Vec::with_capacity(16);
         b.iter(|| {
-            let side = if id % 2 == 0 { Side::Buy } else { Side::Sell };
+            let side = if id.is_multiple_of(2) { Side::Buy } else { Side::Sell };
             fills.clear();
             book.add_order(
-                Order { id, side, price: 0, qty: 10, order_type: OrderType::Market },
+                Order {
+                    id,
+                    side,
+                    price: 0,
+                    qty: 10,
+                    order_type: OrderType::Market,
+                },
                 &mut fills,
             );
             black_box(&fills);
