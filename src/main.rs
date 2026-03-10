@@ -2,6 +2,9 @@ mod bench;
 
 use std::time::Instant;
 
+#[global_allocator]
+static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use bench::harness::*;
 use bench::scenarios;
 
@@ -9,6 +12,7 @@ fn main() {
     let mut r = Reporter::new();
 
     r.header("=== Matching Engine Latency Benchmark ===");
+    r.git_version();
     r.header(&format!(
         "    warmup={WARMUP}  iters={ITERS}  sweep_iters={SWEEP_ITERS}"
     ));
@@ -65,6 +69,6 @@ fn main() {
         );
     }
 
-    r.footer(&format!("\n  Total benchmark time: {:.2?}", t0.elapsed()));
+    r.summary(t0.elapsed());
     r.save();
 }

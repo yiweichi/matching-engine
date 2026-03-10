@@ -1,38 +1,122 @@
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::BTreeMap;
 
 use rustc_hash::FxHashMap;
 
 use crate::types::*;
 
-// ── Internal types ──────────────────────────────────────────────
+// ── Arena allocator ────────────────────────────────────────────
 
-struct RestingOrder {
+const INVALID: u32 = u32::MAX;
+
+struct Node {
     id: OrderId,
     qty: Qty,
+    price: Price,
+    side: Side,
+    prev: u32,
+    next: u32,
 }
 
+enum Slot {
+    Occupied(Node),
+    Vacant { next_free: u32 },
+}
+
+struct Arena {
+    slots: Vec<Slot>,
+    free_head: u32,
+}
+
+impl Arena {
+    fn new() -> Self {
+        Self {
+            slots: Vec::new(),
+            free_head: INVALID,
+        }
+    }
+
+    fn with_capacity(cap: usize) -> Self {
+        Self {
+            slots: Vec::with_capacity(cap),
+            free_head: INVALID,
+        }
+    }
+
+    #[inline]
+    fn alloc(&mut self, node: Node) -> u32 {
+        if self.free_head != INVALID {
+            let idx = self.free_head;
+            match &self.slots[idx as usize] {
+                Slot::Vacant { next_free } => self.free_head = *next_free,
+                Slot::Occupied(_) => unreachable!(),
+            }
+            self.slots[idx as usize] = Slot::Occupied(node);
+            idx
+        } else {
+            let idx = self.slots.len() as u32;
+            self.slots.push(Slot::Occupied(node));
+            idx
+        }
+    }
+
+    #[inline]
+    fn dealloc(&mut self, idx: u32) {
+        self.slots[idx as usize] = Slot::Vacant {
+            next_free: self.free_head,
+        };
+        self.free_head = idx;
+    }
+
+    #[inline]
+    fn get(&self, idx: u32) -> &Node {
+        match &self.slots[idx as usize] {
+            Slot::Occupied(node) => node,
+            Slot::Vacant { .. } => unreachable!(),
+        }
+    }
+
+    #[inline]
+    fn get_mut(&mut self, idx: u32) -> &mut Node {
+        match &mut self.slots[idx as usize] {
+            Slot::Occupied(node) => node,
+            Slot::Vacant { .. } => unreachable!(),
+        }
+    }
+}
+
+// ── Price level ────────────────────────────────────────────────
+
 struct PriceLevel {
-    orders: VecDeque<RestingOrder>,
+    head: u32,
+    tail: u32,
 }
 
 impl PriceLevel {
     #[inline]
     fn new() -> Self {
         Self {
-            orders: VecDeque::new(),
+            head: INVALID,
+            tail: INVALID,
         }
+    }
+
+    #[inline]
+    fn is_empty(&self) -> bool {
+        self.head == INVALID
     }
 }
 
-// ── OrderBook ───────────────────────────────────────────────────
+// ── OrderBook ──────────────────────────────────────────────────
 
 pub struct OrderBook {
     /// Bid side – keys are prices, highest = best bid.
     bids: BTreeMap<Price, PriceLevel>,
     /// Ask side – keys are prices, lowest = best ask.
     asks: BTreeMap<Price, PriceLevel>,
-    /// O(1) lookup: order_id → (side, price) for fast cancel.
-    locations: FxHashMap<OrderId, (Side, Price)>,
+    /// O(1) lookup: order_id → arena slot index.
+    locations: FxHashMap<OrderId, u32>,
+    /// Slab allocator for order nodes.
+    arena: Arena,
 }
 
 impl OrderBook {
@@ -41,6 +125,7 @@ impl OrderBook {
             bids: BTreeMap::new(),
             asks: BTreeMap::new(),
             locations: FxHashMap::default(),
+            arena: Arena::new(),
         }
     }
 
@@ -49,6 +134,7 @@ impl OrderBook {
             bids: BTreeMap::new(),
             asks: BTreeMap::new(),
             locations: FxHashMap::with_capacity_and_hasher(cap, Default::default()),
+            arena: Arena::with_capacity(cap),
         }
     }
 
@@ -70,26 +156,47 @@ impl OrderBook {
         }
     }
 
-    /// Cancel a resting order. Returns `true` if the order existed.
+    /// Cancel a resting order in O(1). Returns `true` if the order existed.
     #[inline]
     pub fn cancel(&mut self, order_id: OrderId) -> bool {
-        let (side, price) = match self.locations.remove(&order_id) {
-            Some(loc) => loc,
+        let idx = match self.locations.remove(&order_id) {
+            Some(i) => i,
             None => return false,
         };
 
+        let (side, price, prev, next) = {
+            let node = self.arena.get(idx);
+            (node.side, node.price, node.prev, node.next)
+        };
+
+        // Unlink from doubly-linked list — O(1)
+        if prev != INVALID {
+            self.arena.get_mut(prev).next = next;
+        }
+        if next != INVALID {
+            self.arena.get_mut(next).prev = prev;
+        }
+
+        // Update price level head/tail
         let book = match side {
             Side::Buy => &mut self.bids,
             Side::Sell => &mut self.asks,
         };
-
+        let mut remove_level = false;
         if let Some(level) = book.get_mut(&price) {
-            level.orders.retain(|o| o.id != order_id);
-            if level.orders.is_empty() {
-                book.remove(&price);
+            if level.head == idx {
+                level.head = next;
             }
+            if level.tail == idx {
+                level.tail = prev;
+            }
+            remove_level = level.is_empty();
+        }
+        if remove_level {
+            book.remove(&price);
         }
 
+        self.arena.dealloc(idx);
         true
     }
 
@@ -132,9 +239,18 @@ impl OrderBook {
             Side::Buy => &self.bids,
             Side::Sell => &self.asks,
         };
-        book.get(&price)
-            .map(|lvl| lvl.orders.iter().map(|o| o.qty).sum())
-            .unwrap_or(0)
+        let level = match book.get(&price) {
+            Some(l) => l,
+            None => return 0,
+        };
+        let mut total: Qty = 0;
+        let mut cur = level.head;
+        while cur != INVALID {
+            let node = self.arena.get(cur);
+            total += node.qty;
+            cur = node.next;
+        }
+        total
     }
 
     // ── Matching ────────────────────────────────────────────────
@@ -154,7 +270,7 @@ impl OrderBook {
 
             self.fill_at_level(Side::Buy, best_ask, order.id, remaining, fills);
 
-            if self.asks.get(&best_ask).is_none_or(|l| l.orders.is_empty()) {
+            if self.asks.get(&best_ask).is_none_or(|l| l.is_empty()) {
                 self.asks.remove(&best_ask);
             }
         }
@@ -175,7 +291,7 @@ impl OrderBook {
 
             self.fill_at_level(Side::Sell, best_bid, order.id, remaining, fills);
 
-            if self.bids.get(&best_bid).is_none_or(|l| l.orders.is_empty()) {
+            if self.bids.get(&best_bid).is_none_or(|l| l.is_empty()) {
                 self.bids.remove(&best_bid);
             }
         }
@@ -203,46 +319,68 @@ impl OrderBook {
         };
 
         while *remaining > 0 {
-            let maker = match level.orders.front_mut() {
-                Some(m) => m,
-                None => return,
+            if level.head == INVALID {
+                return;
+            }
+            let head_idx = level.head;
+
+            let (maker_id, fill_qty, maker_qty, maker_next) = {
+                let maker = self.arena.get_mut(head_idx);
+                let fq = (*remaining).min(maker.qty);
+                maker.qty -= fq;
+                *remaining -= fq;
+                (maker.id, fq, maker.qty, maker.next)
             };
 
-            let fill_qty = (*remaining).min(maker.qty);
-
             fills.push(Fill {
-                maker_id: maker.id,
+                maker_id,
                 taker_id,
                 price,
                 qty: fill_qty,
                 side: taker_side,
             });
 
-            *remaining -= fill_qty;
-            maker.qty -= fill_qty;
-
-            if maker.qty == 0 {
-                let done = level.orders.pop_front().unwrap();
-                self.locations.remove(&done.id);
+            if maker_qty == 0 {
+                level.head = maker_next;
+                if maker_next != INVALID {
+                    self.arena.get_mut(maker_next).prev = INVALID;
+                } else {
+                    level.tail = INVALID;
+                }
+                self.arena.dealloc(head_idx);
+                self.locations.remove(&maker_id);
             }
         }
     }
 
-    // ── Placement ───────────────────────────────────────────────
+    // ── Placement ─────────────────────────────────────────────
 
     #[inline]
     fn place(&mut self, id: OrderId, side: Side, price: Price, qty: Qty) {
-        let book = match side {
-            Side::Buy => &mut self.bids,
-            Side::Sell => &mut self.asks,
+        let idx = self.arena.alloc(Node {
+            id,
+            qty,
+            price,
+            side,
+            prev: INVALID,
+            next: INVALID,
+        });
+
+        let level = match side {
+            Side::Buy => self.bids.entry(price).or_insert_with(PriceLevel::new),
+            Side::Sell => self.asks.entry(price).or_insert_with(PriceLevel::new),
         };
 
-        book.entry(price)
-            .or_insert_with(PriceLevel::new)
-            .orders
-            .push_back(RestingOrder { id, qty });
+        let old_tail = level.tail;
+        if old_tail != INVALID {
+            self.arena.get_mut(old_tail).next = idx;
+            self.arena.get_mut(idx).prev = old_tail;
+        } else {
+            level.head = idx;
+        }
+        level.tail = idx;
 
-        self.locations.insert(id, (side, price));
+        self.locations.insert(id, idx);
     }
 }
 

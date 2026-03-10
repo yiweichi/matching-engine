@@ -1,4 +1,5 @@
 use std::fs;
+use std::process::Command;
 use std::time::SystemTime;
 
 use hdrhistogram::Histogram;
@@ -23,13 +24,39 @@ fn results_dir() -> &'static str {
 
 pub struct Reporter {
     output: String,
+    combined: Histogram<u64>,
+    total_ops: u64,
 }
 
 impl Reporter {
     pub fn new() -> Self {
         Self {
             output: String::new(),
+            combined: new_hist(),
+            total_ops: 0,
         }
+    }
+
+    pub fn git_version(&mut self) {
+        let hash = Command::new("git")
+            .args(["rev-parse", "--short", "HEAD"])
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .unwrap_or_default();
+        let dirty = Command::new("git")
+            .args(["status", "--porcelain"])
+            .output()
+            .ok()
+            .map(|o| !o.stdout.is_empty())
+            .unwrap_or(false);
+
+        let version = format!(
+            "    git: {}{}",
+            hash.trim(),
+            if dirty { " (dirty)" } else { "" }
+        );
+        self.header(&version);
     }
 
     pub fn header(&mut self, text: &str) {
@@ -39,8 +66,8 @@ impl Reporter {
     }
 
     pub fn section(&mut self, title: &str) {
-        let inner_w: usize = 88; // separator dashes (after 2-space indent)
-        let title_w: usize = inner_w + 6; // title bar is widest
+        let inner_w: usize = 88;
+        let title_w: usize = inner_w + 6;
         let title_prefix = format!("── {} (ns) ", title);
         let title_bar = format!(
             "{}{}",
@@ -65,6 +92,9 @@ impl Reporter {
     }
 
     pub fn row(&mut self, label: &str, hist: &Histogram<u64>) {
+        self.combined.add(hist).ok();
+        self.total_ops += hist.len();
+
         let line = format!(
             "  {:<22} {:>10} {:>10} {:>10} {:>10} {:>10} {:>10}",
             label,
@@ -80,9 +110,32 @@ impl Reporter {
         self.output.push('\n');
     }
 
-    pub fn footer(&mut self, text: &str) {
-        println!("{text}");
-        self.output.push_str(text);
+    pub fn summary(&mut self, elapsed: std::time::Duration) {
+        let h = &self.combined;
+        let throughput = if elapsed.as_nanos() > 0 {
+            (self.total_ops as f64 / elapsed.as_secs_f64()) as u64
+        } else {
+            0
+        };
+
+        let line = format!(
+            concat!(
+                "\n── Summary ───────────────────────────────────────────\n",
+                "  Total ops:          {}\n",
+                "  Throughput:         {} ops/sec\n",
+                "  Latency (all ops):  p50={} ns  p99={} ns  p99.9={} ns  max={} ns\n",
+                "  Benchmark time:     {:.2?}",
+            ),
+            fmt_count(self.total_ops),
+            fmt_count(throughput),
+            fmt_ns(h.value_at_percentile(50.0)),
+            fmt_ns(h.value_at_percentile(99.0)),
+            fmt_ns(h.value_at_percentile(99.9)),
+            fmt_ns(h.max()),
+            elapsed,
+        );
+        println!("{line}");
+        self.output.push_str(&line);
         self.output.push('\n');
     }
 
@@ -128,6 +181,11 @@ fn fmt_utc(secs: u64) -> String {
 
 pub fn new_hist() -> Histogram<u64> {
     Histogram::<u64>::new_with_bounds(1, 1_000_000_000, 3).unwrap()
+}
+
+/// Format a number with comma grouping: 1,234,567
+fn fmt_count(n: u64) -> String {
+    fmt_ns(n)
 }
 
 /// Format nanoseconds with comma grouping: 1,234,567
