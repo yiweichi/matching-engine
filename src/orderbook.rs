@@ -117,6 +117,9 @@ pub struct OrderBook {
     locations: FxHashMap<OrderId, u32>,
     /// Slab allocator for order nodes.
     arena: Arena,
+    /// Cached best prices – O(1) access, avoids BTreeMap traversal.
+    cached_best_bid: Option<Price>,
+    cached_best_ask: Option<Price>,
 }
 
 impl OrderBook {
@@ -126,6 +129,8 @@ impl OrderBook {
             asks: BTreeMap::new(),
             locations: FxHashMap::default(),
             arena: Arena::new(),
+            cached_best_bid: None,
+            cached_best_ask: None,
         }
     }
 
@@ -135,6 +140,8 @@ impl OrderBook {
             asks: BTreeMap::new(),
             locations: FxHashMap::with_capacity_and_hasher(cap, Default::default()),
             arena: Arena::with_capacity(cap),
+            cached_best_bid: None,
+            cached_best_ask: None,
         }
     }
 
@@ -194,22 +201,34 @@ impl OrderBook {
         }
         if remove_level {
             book.remove(&price);
+            match side {
+                Side::Buy => {
+                    if self.cached_best_bid == Some(price) {
+                        self.cached_best_bid = self.bids.keys().next_back().copied();
+                    }
+                }
+                Side::Sell => {
+                    if self.cached_best_ask == Some(price) {
+                        self.cached_best_ask = self.asks.keys().next().copied();
+                    }
+                }
+            }
         }
 
         self.arena.dealloc(idx);
         true
     }
 
-    /// Best bid price, or `None` if the bid side is empty.
+    /// Best bid price, or `None` if the bid side is empty. O(1).
     #[inline]
     pub fn best_bid(&self) -> Option<Price> {
-        self.bids.keys().next_back().copied()
+        self.cached_best_bid
     }
 
-    /// Best ask price, or `None` if the ask side is empty.
+    /// Best ask price, or `None` if the ask side is empty. O(1).
     #[inline]
     pub fn best_ask(&self) -> Option<Price> {
-        self.asks.keys().next().copied()
+        self.cached_best_ask
     }
 
     /// Spread = best_ask - best_bid.  `None` if either side is empty.
@@ -259,7 +278,7 @@ impl OrderBook {
     #[inline]
     fn match_buy(&mut self, order: &Order, remaining: &mut Qty, fills: &mut Vec<Fill>) {
         while *remaining > 0 {
-            let best_ask = match self.asks.keys().next().copied() {
+            let best_ask = match self.cached_best_ask {
                 Some(p) => p,
                 None => return,
             };
@@ -272,6 +291,7 @@ impl OrderBook {
 
             if self.asks.get(&best_ask).is_none_or(|l| l.is_empty()) {
                 self.asks.remove(&best_ask);
+                self.cached_best_ask = self.asks.keys().next().copied();
             }
         }
     }
@@ -280,7 +300,7 @@ impl OrderBook {
     #[inline]
     fn match_sell(&mut self, order: &Order, remaining: &mut Qty, fills: &mut Vec<Fill>) {
         while *remaining > 0 {
-            let best_bid = match self.bids.keys().next_back().copied() {
+            let best_bid = match self.cached_best_bid {
                 Some(p) => p,
                 None => return,
             };
@@ -293,6 +313,7 @@ impl OrderBook {
 
             if self.bids.get(&best_bid).is_none_or(|l| l.is_empty()) {
                 self.bids.remove(&best_bid);
+                self.cached_best_bid = self.bids.keys().next_back().copied();
             }
         }
     }
@@ -379,6 +400,19 @@ impl OrderBook {
             level.head = idx;
         }
         level.tail = idx;
+
+        match side {
+            Side::Buy => {
+                if self.cached_best_bid.is_none_or(|b| price > b) {
+                    self.cached_best_bid = Some(price);
+                }
+            }
+            Side::Sell => {
+                if self.cached_best_ask.is_none_or(|a| price < a) {
+                    self.cached_best_ask = Some(price);
+                }
+            }
+        }
 
         self.locations.insert(id, idx);
     }

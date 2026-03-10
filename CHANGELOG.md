@@ -38,6 +38,7 @@ Key improvements vs 2026-03-05 (Linux):
 ## 2026-03-10 — mimalloc + benchmark improvements
 
 - Switched global allocator to `mimalloc` for lower allocation overhead and reduced tail latency
+- Cached `best_bid` / `best_ask` — O(log n) BTreeMap traversal → O(1) field read; benefits multi-level sweep most
 - Added Summary section to benchmark report (total ops, throughput, aggregate latency)
 - Added git commit hash to benchmark report header for version traceability
 - Fixed clippy warnings (`map_or` → `is_none_or`, `% 2 == 0` → `is_multiple_of(2)`)
