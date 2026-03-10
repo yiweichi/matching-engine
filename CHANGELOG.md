@@ -34,3 +34,11 @@ Key improvements vs 2026-03-05 (Linux):
 | Cancel hot level (10K/level) | 24,687 ns | 0 ns | **>1000x** |
 | Mixed workload (depth=100K) | 110 ns | 41 ns | **2.7x** |
 | Total benchmark time | 1.39s | 0.40s | **3.5x** |
+
+## 2026-03-10 — mimalloc + benchmark improvements
+
+- Switched global allocator to `mimalloc` for lower allocation overhead and reduced tail latency
+- Added Summary section to benchmark report (total ops, throughput, aggregate latency)
+- Added git commit hash to benchmark report header for version traceability
+- Fixed clippy warnings (`map_or` → `is_none_or`, `% 2 == 0` → `is_multiple_of(2)`)
+- Added GitHub Actions CI (fmt + clippy + test + benchmark smoke)
