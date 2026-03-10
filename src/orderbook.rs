@@ -11,8 +11,6 @@ const INVALID: u32 = u32::MAX;
 struct Node {
     id: OrderId,
     qty: Qty,
-    price: Price,
-    side: Side,
     prev: u32,
     next: u32,
 }
@@ -113,8 +111,8 @@ pub struct OrderBook {
     bids: BTreeMap<Price, PriceLevel>,
     /// Ask side – keys are prices, lowest = best ask.
     asks: BTreeMap<Price, PriceLevel>,
-    /// O(1) lookup: order_id → arena slot index.
-    locations: FxHashMap<OrderId, u32>,
+    /// O(1) lookup: order_id → (side, price, arena_idx).
+    locations: FxHashMap<OrderId, (Side, Price, u32)>,
     /// Slab allocator for order nodes.
     arena: Arena,
     /// Cached best prices – O(1) access, avoids BTreeMap traversal.
@@ -166,14 +164,14 @@ impl OrderBook {
     /// Cancel a resting order in O(1). Returns `true` if the order existed.
     #[inline]
     pub fn cancel(&mut self, order_id: OrderId) -> bool {
-        let idx = match self.locations.remove(&order_id) {
-            Some(i) => i,
+        let (side, price, idx) = match self.locations.remove(&order_id) {
+            Some(loc) => loc,
             None => return false,
         };
 
-        let (side, price, prev, next) = {
+        let (prev, next) = {
             let node = self.arena.get(idx);
-            (node.side, node.price, node.prev, node.next)
+            (node.prev, node.next)
         };
 
         // Unlink from doubly-linked list — O(1)
@@ -381,8 +379,6 @@ impl OrderBook {
         let idx = self.arena.alloc(Node {
             id,
             qty,
-            price,
-            side,
             prev: INVALID,
             next: INVALID,
         });
@@ -414,7 +410,7 @@ impl OrderBook {
             }
         }
 
-        self.locations.insert(id, idx);
+        self.locations.insert(id, (side, price, idx));
     }
 }
 
