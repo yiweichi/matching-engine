@@ -61,6 +61,11 @@ fn main() {
         );
     }
 
+    r.section("Drain Single Level");
+    for &n in &[10u64, 50, 100, 500, 1_000] {
+        r.row(&format!("{} orders", n), &scenarios::drain_single_level(n));
+    }
+
     r.section("Mixed Workload (65% cancel, 25% insert, 10% fill)");
     for &d in &[100u64, 10_000, 100_000] {
         r.row(
