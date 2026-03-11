@@ -260,6 +260,42 @@ pub fn cancel_hot_level(orders_per_level: u64) -> Histogram<u64> {
     })
 }
 
+pub fn drain_single_level(orders: u64) -> Histogram<u64> {
+    let mut fills = Vec::with_capacity(orders as usize);
+    let mut id = 1u64;
+    let price = MID + SPREAD;
+
+    timed_loop(WARMUP, SWEEP_ITERS, || {
+        let mut book = OrderBook::with_capacity(orders as usize);
+        for _ in 0..orders {
+            fills.clear();
+            book.add_order(
+                Order {
+                    id,
+                    side: Side::Sell,
+                    price,
+                    qty: 1,
+                    order_type: OrderType::Limit,
+                },
+                &mut fills,
+            );
+            id += 1;
+        }
+        fills.clear();
+        book.add_order(
+            Order {
+                id,
+                side: Side::Buy,
+                price,
+                qty: orders,
+                order_type: OrderType::Limit,
+            },
+            &mut fills,
+        );
+        id += 1;
+    })
+}
+
 pub fn mixed_workload(depth: u64) -> Histogram<u64> {
     let mut fills = Vec::with_capacity(8);
     let mut id = 1u64;
