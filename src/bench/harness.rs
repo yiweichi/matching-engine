@@ -26,6 +26,8 @@ pub struct Reporter {
     output: String,
     combined: Histogram<u64>,
     total_ops: u64,
+    histograms: Vec<(String, Histogram<u64>)>,
+    current_section: String,
 }
 
 impl Reporter {
@@ -34,6 +36,8 @@ impl Reporter {
             output: String::new(),
             combined: new_hist(),
             total_ops: 0,
+            histograms: Vec::new(),
+            current_section: String::new(),
         }
     }
 
@@ -66,6 +70,7 @@ impl Reporter {
     }
 
     pub fn section(&mut self, title: &str) {
+        self.current_section = title.to_string();
         let inner_w: usize = 88;
         let title_w: usize = inner_w + 6;
         let title_prefix = format!("── {} (ns) ", title);
@@ -94,6 +99,8 @@ impl Reporter {
     pub fn row(&mut self, label: &str, hist: &Histogram<u64>) {
         self.combined.add(hist).ok();
         self.total_ops += hist.len();
+        let name = format!("{} — {}", self.current_section, label);
+        self.histograms.push((name, hist.clone()));
 
         let line = format!(
             "  {:<22} {:>10} {:>10} {:>10} {:>10} {:>10} {:>10}",
@@ -149,6 +156,38 @@ impl Reporter {
         let name = fmt_utc(ts);
         let path = format!("{dir}/{name}.txt");
         fs::write(&path, &self.output).unwrap();
+
+        let hist_dir = format!("{dir}/{name}_histograms");
+        fs::create_dir_all(&hist_dir).ok();
+        for (label, hist) in &self.histograms {
+            let safe_name: String = label
+                .chars()
+                .map(|c| match c {
+                    'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' => c,
+                    _ => '_',
+                })
+                .collect();
+            let mut csv = String::from("percentile,latency_ns\n");
+            // 0% to 90% in 1% steps, 90-99% in 0.1%, 99-99.9% in 0.01%, 99.9-99.99% in 0.001%
+            let percentiles: Vec<f64> = (0..=90)
+                .map(|i| i as f64)
+                .chain((900..=990).map(|i| i as f64 / 10.0))
+                .chain((9900..=9990).map(|i| i as f64 / 100.0))
+                .chain((99900..=99990).map(|i| i as f64 / 1000.0))
+                .chain(std::iter::once(99.999))
+                .chain(std::iter::once(100.0))
+                .collect();
+            for pct in percentiles {
+                let v = if pct >= 100.0 {
+                    hist.max()
+                } else {
+                    hist.value_at_percentile(pct)
+                };
+                csv.push_str(&format!("{:.4},{}\n", pct, v));
+            }
+            fs::write(format!("{hist_dir}/{safe_name}.csv"), &csv).ok();
+        }
+        println!("  Histograms saved to {hist_dir}/");
     }
 }
 

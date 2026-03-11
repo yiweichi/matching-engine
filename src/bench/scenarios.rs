@@ -111,8 +111,9 @@ pub fn passive_insert(depth: u64) -> Histogram<u64> {
 pub fn aggressive_fill(depth: u64) -> Histogram<u64> {
     let (mut book, mut id, mut fills) = fresh_book_asks(depth);
     let refill_at = (depth / 4).max(10) as usize;
+    let mut hist = new_hist();
 
-    timed_loop(WARMUP, ITERS, || {
+    for i in 0..(WARMUP + ITERS) {
         if book.len() < refill_at {
             let fresh = fresh_book_asks(depth);
             book = fresh.0;
@@ -120,6 +121,7 @@ pub fn aggressive_fill(depth: u64) -> Histogram<u64> {
             fills = fresh.2;
         }
         fills.clear();
+        let t = Instant::now();
         book.add_order(
             Order {
                 id,
@@ -130,8 +132,12 @@ pub fn aggressive_fill(depth: u64) -> Histogram<u64> {
             },
             &mut fills,
         );
+        if i >= WARMUP {
+            hist.record(t.elapsed().as_nanos() as u64).ok();
+        }
         id += 1;
-    })
+    }
+    hist
 }
 
 pub fn multi_level_sweep(num_levels: u64) -> Histogram<u64> {
@@ -172,8 +178,9 @@ pub fn multi_level_sweep(num_levels: u64) -> Histogram<u64> {
 pub fn market_order(depth: u64) -> Histogram<u64> {
     let (mut book, mut id, mut fills) = fresh_book_asks(depth);
     let refill_at = (depth / 4).max(10) as usize;
+    let mut hist = new_hist();
 
-    timed_loop(WARMUP, ITERS, || {
+    for i in 0..(WARMUP + ITERS) {
         if book.len() < refill_at {
             let fresh = fresh_book_asks(depth);
             book = fresh.0;
@@ -181,6 +188,7 @@ pub fn market_order(depth: u64) -> Histogram<u64> {
             fills = fresh.2;
         }
         fills.clear();
+        let t = Instant::now();
         book.add_order(
             Order {
                 id,
@@ -191,73 +199,79 @@ pub fn market_order(depth: u64) -> Histogram<u64> {
             },
             &mut fills,
         );
+        if i >= WARMUP {
+            hist.record(t.elapsed().as_nanos() as u64).ok();
+        }
         id += 1;
-    })
+    }
+    hist
 }
 
 pub fn cancel(depth: u64) -> Histogram<u64> {
-    let (mut book, mut id, mut fills) = fresh_book_both(depth);
+    let (mut book, mut id, _) = fresh_book_both(depth);
     let mut cancel_id = id - depth;
+    let mut hist = new_hist();
 
-    timed_loop(WARMUP, ITERS, || {
+    for i in 0..(WARMUP + ITERS) {
         if cancel_id >= id {
             let fresh = fresh_book_both(depth);
             book = fresh.0;
             id = fresh.1;
-            fills = fresh.2;
             cancel_id = id - depth;
         }
+        let t = Instant::now();
         book.cancel(cancel_id);
+        if i >= WARMUP {
+            hist.record(t.elapsed().as_nanos() as u64).ok();
+        }
         cancel_id += 1;
-    })
+    }
+    hist
 }
 
 pub fn cancel_hot_level(orders_per_level: u64) -> Histogram<u64> {
     let mut fills = Vec::with_capacity(4);
     let mut id = 1u64;
     let price = MID + SPREAD;
+    let iters = ITERS.min(orders_per_level);
 
+    let mut hist = new_hist();
     let mut book = OrderBook::new();
-    let mut first_id = id;
-    for _ in 0..orders_per_level {
-        fills.clear();
-        book.add_order(
-            Order {
-                id,
-                side: Side::Sell,
-                price,
-                qty: 10,
-                order_type: OrderType::Limit,
-            },
-            &mut fills,
-        );
-        id += 1;
-    }
-    let mut cancel_id = first_id;
 
-    timed_loop(WARMUP, ITERS.min(orders_per_level), || {
+    let mut seed = |book: &mut OrderBook, id: &mut u64| -> u64 {
+        let fid = *id;
+        for _ in 0..orders_per_level {
+            fills.clear();
+            book.add_order(
+                Order {
+                    id: *id,
+                    side: Side::Sell,
+                    price,
+                    qty: 10,
+                    order_type: OrderType::Limit,
+                },
+                &mut fills,
+            );
+            *id += 1;
+        }
+        fid
+    };
+
+    let mut cancel_id = seed(&mut book, &mut id);
+
+    for i in 0..(WARMUP + iters) {
         if cancel_id >= id {
             book = OrderBook::new();
-            first_id = id;
-            for _ in 0..orders_per_level {
-                fills.clear();
-                book.add_order(
-                    Order {
-                        id,
-                        side: Side::Sell,
-                        price,
-                        qty: 10,
-                        order_type: OrderType::Limit,
-                    },
-                    &mut fills,
-                );
-                id += 1;
-            }
-            cancel_id = first_id;
+            cancel_id = seed(&mut book, &mut id);
         }
+        let t = Instant::now();
         book.cancel(cancel_id);
+        if i >= WARMUP {
+            hist.record(t.elapsed().as_nanos() as u64).ok();
+        }
         cancel_id += 1;
-    })
+    }
+    hist
 }
 
 pub fn drain_single_level(orders: u64) -> Histogram<u64> {
@@ -305,9 +319,20 @@ pub fn mixed_workload(depth: u64) -> Histogram<u64> {
     let ring_cap = depth.max(4096) as usize;
     let mut cancel_ring: Vec<u64> = (1..=depth).collect();
     let mut ring_idx: usize = 0;
+    let mut hist = new_hist();
 
-    timed_loop(WARMUP, ITERS, || {
+    for i in 0..(WARMUP + ITERS) {
+        // Re-seed before timing if book is too thin
+        if book.len() < 50 {
+            book = OrderBook::with_capacity(depth as usize);
+            id = 1;
+            seed_both(&mut book, depth, &mut id, &mut fills);
+            cancel_ring = (1..=depth).collect();
+            ring_idx = 0;
+        }
+
         let roll = id % 20;
+        let t = Instant::now();
 
         if roll < 13 {
             if !cancel_ring.is_empty() {
@@ -356,14 +381,10 @@ pub fn mixed_workload(depth: u64) -> Histogram<u64> {
             );
         }
 
-        id += 1;
-
-        if book.len() < 50 {
-            book = OrderBook::with_capacity(depth as usize);
-            id = 1;
-            seed_both(&mut book, depth, &mut id, &mut fills);
-            cancel_ring = (1..=depth).collect();
-            ring_idx = 0;
+        if i >= WARMUP {
+            hist.record(t.elapsed().as_nanos() as u64).ok();
         }
-    })
+        id += 1;
+    }
+    hist
 }
