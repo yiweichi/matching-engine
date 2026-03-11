@@ -1,5 +1,8 @@
-CARGO  = cargo
-BIN    = target/release/matching-engine
+CARGO      = cargo
+BIN        = target/release/matching-engine
+RUSTFLAGS  = -C target-cpu=native
+
+export RUSTFLAGS
 
 .PHONY: build test clippy fmt bench bench-pin clean
 

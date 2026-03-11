@@ -48,3 +48,8 @@ cargo run --release     # run latency benchmark (saves to results/)
 | Mixed Workload | Realistic flow: 65% cancel, 25% insert, 10% fill |
 
 Each scenario reports latency percentiles: **p50, p99, p99.9, p99.99, min, max**.
+
+## Deployment Tuning
+
+See [docs/tuning.md](docs/tuning.md) for OS and hardware-level optimizations:
+CPU pinning, core isolation, frequency scaling, memory locking, NUMA, etc.
