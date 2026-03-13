@@ -8,7 +8,28 @@ static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 use bench::harness::*;
 use bench::scenarios;
 
+fn try_mlockall() {
+    #[cfg(unix)]
+    unsafe {
+        if libc::mlockall(libc::MCL_CURRENT | libc::MCL_FUTURE) != 0 {
+            let err = std::io::Error::last_os_error();
+            let hint = match err.raw_os_error() {
+                Some(libc::EPERM) => {
+                    "hint: run with sufficient privileges or raise RLIMIT_MEMLOCK"
+                }
+                Some(libc::ENOMEM) => {
+                    "hint: increase `ulimit -l` / memlock limit, or disable mlockall on small/shared machines"
+                }
+                _ => "hint: see docs/tuning.md for mlockall setup",
+            };
+            eprintln!("warning: mlockall failed: {err}; {hint}");
+        }
+    }
+}
+
 fn main() {
+    try_mlockall();
+
     let mut r = Reporter::new();
 
     r.header("=== Matching Engine Latency Benchmark ===");
