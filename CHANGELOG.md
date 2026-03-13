@@ -44,3 +44,12 @@ Key improvements vs 2026-03-05 (Linux):
 - Added git commit hash to benchmark report header for version traceability
 - Fixed clippy warnings (`map_or` → `is_none_or`, `% 2 == 0` → `is_multiple_of(2)`)
 - Added GitHub Actions CI (fmt + clippy + test + benchmark smoke)
+
+## 2026-03-11 — Build hardening + deployment tuning guide
+
+- Enabled `panic = "abort"` and `strip = true` in release profile
+- Added `Makefile` with `bench`, `bench-pin <cpu>`, `test`, `clippy`, `fmt` targets
+- Added `docs/tuning.md` — deployment-level tuning guide (CPU pinning, isolcpus, frequency scaling, mlockall, NUMA, THP, etc.)
+- Fixed unused variable warnings in benchmark scenarios (`fills`, `first_id`)
+- Removed `target-cpu=native` — has negligible effect on this workload because the hot path is memory-bound (pointer chasing in HashMap, BTreeMap, arena linked list), not compute-bound; there is almost nothing for SIMD to vectorize
+- Evaluated `lto`, `codegen-units = 1`, `opt-level = 3` — kept for correctness but measured no observable latency improvement; the crate is small (single crate, all hot functions already visible to the optimizer) and the bottleneck is memory access patterns, not instruction throughput
