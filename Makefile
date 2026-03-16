@@ -4,7 +4,7 @@ RUSTFLAGS  = -C target-cpu=native
 
 export RUSTFLAGS
 
-.PHONY: build test clippy fmt bench bench-pin clean
+.PHONY: build test clippy fmt pr bench bench-pin clean
 
 build:
 	$(CARGO) build --release
@@ -17,6 +17,8 @@ clippy:
 
 fmt:
 	$(CARGO) fmt
+
+pr: test clippy fmt
 
 bench: build
 	$(BIN)

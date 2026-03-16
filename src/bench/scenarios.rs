@@ -143,9 +143,10 @@ pub fn aggressive_fill(depth: u64) -> Histogram<u64> {
 pub fn multi_level_sweep(num_levels: u64) -> Histogram<u64> {
     let mut fills = Vec::with_capacity(num_levels as usize);
     let mut id = 1u64;
+    let mut hist = new_hist();
 
-    timed_loop(WARMUP, SWEEP_ITERS, || {
-        let mut book = OrderBook::new();
+    for i in 0..(WARMUP + SWEEP_ITERS) {
+        let mut book = OrderBook::with_capacity(num_levels as usize);
         for l in 0..num_levels {
             fills.clear();
             book.add_order(
@@ -161,6 +162,7 @@ pub fn multi_level_sweep(num_levels: u64) -> Histogram<u64> {
             id += 1;
         }
         fills.clear();
+        let t = Instant::now();
         book.add_order(
             Order {
                 id,
@@ -171,8 +173,13 @@ pub fn multi_level_sweep(num_levels: u64) -> Histogram<u64> {
             },
             &mut fills,
         );
+        if i >= WARMUP {
+            hist.record(t.elapsed().as_nanos() as u64).ok();
+        }
         id += 1;
-    })
+    }
+
+    hist
 }
 
 pub fn market_order(depth: u64) -> Histogram<u64> {
@@ -278,8 +285,9 @@ pub fn drain_single_level(orders: u64) -> Histogram<u64> {
     let mut fills = Vec::with_capacity(orders as usize);
     let mut id = 1u64;
     let price = MID + SPREAD;
+    let mut hist = new_hist();
 
-    timed_loop(WARMUP, SWEEP_ITERS, || {
+    for i in 0..(WARMUP + SWEEP_ITERS) {
         let mut book = OrderBook::with_capacity(orders as usize);
         for _ in 0..orders {
             fills.clear();
@@ -296,6 +304,7 @@ pub fn drain_single_level(orders: u64) -> Histogram<u64> {
             id += 1;
         }
         fills.clear();
+        let t = Instant::now();
         book.add_order(
             Order {
                 id,
@@ -306,8 +315,13 @@ pub fn drain_single_level(orders: u64) -> Histogram<u64> {
             },
             &mut fills,
         );
+        if i >= WARMUP {
+            hist.record(t.elapsed().as_nanos() as u64).ok();
+        }
         id += 1;
-    })
+    }
+
+    hist
 }
 
 pub fn mixed_workload(depth: u64) -> Histogram<u64> {
