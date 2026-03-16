@@ -79,6 +79,13 @@ fn timed_loop(warmup: u64, iters: u64, mut body: impl FnMut()) -> Histogram<u64>
     hist
 }
 
+/// Shared profile loop: runs the same workload without timing or histogram recording.
+fn profile_loop(warmup: u64, iters: u64, mut body: impl FnMut()) {
+    for _ in 0..(warmup + iters) {
+        body();
+    }
+}
+
 // ── Scenarios ───────────────────────────────────────────────────
 
 pub fn passive_insert(depth: u64) -> Histogram<u64> {
@@ -401,4 +408,281 @@ pub fn mixed_workload(depth: u64) -> Histogram<u64> {
         id += 1;
     }
     hist
+}
+
+pub fn profile_passive_insert(depth: u64) {
+    let mut book = OrderBook::with_capacity((depth + WARMUP + ITERS) as usize);
+    let mut fills = Vec::with_capacity(4);
+    let mut id = 1u64;
+    seed_both(&mut book, depth, &mut id, &mut fills);
+
+    profile_loop(WARMUP, ITERS, || {
+        let (side, price) = if id.is_multiple_of(2) {
+            (Side::Buy, MID - SPREAD - 200 - (id % 100))
+        } else {
+            (Side::Sell, MID + SPREAD + 200 + (id % 100))
+        };
+        fills.clear();
+        book.add_order(
+            Order {
+                id,
+                side,
+                price,
+                qty: 10,
+                order_type: OrderType::Limit,
+            },
+            &mut fills,
+        );
+        id += 1;
+    });
+}
+
+pub fn profile_aggressive_fill(depth: u64) {
+    let (mut book, mut id, mut fills) = fresh_book_asks(depth);
+    let refill_at = (depth / 4).max(10) as usize;
+
+    profile_loop(WARMUP, ITERS, || {
+        if book.len() < refill_at {
+            let fresh = fresh_book_asks(depth);
+            book = fresh.0;
+            id = fresh.1;
+            fills = fresh.2;
+        }
+        fills.clear();
+        book.add_order(
+            Order {
+                id,
+                side: Side::Buy,
+                price: MID + SPREAD + 200,
+                qty: 1,
+                order_type: OrderType::Limit,
+            },
+            &mut fills,
+        );
+        id += 1;
+    });
+}
+
+pub fn profile_multi_level_sweep(num_levels: u64) {
+    let mut fills = Vec::with_capacity(num_levels as usize);
+    let mut id = 1u64;
+
+    profile_loop(WARMUP, SWEEP_ITERS, || {
+        let mut book = OrderBook::with_capacity(num_levels as usize);
+        for l in 0..num_levels {
+            fills.clear();
+            book.add_order(
+                Order {
+                    id,
+                    side: Side::Sell,
+                    price: MID + 1 + l,
+                    qty: 10,
+                    order_type: OrderType::Limit,
+                },
+                &mut fills,
+            );
+            id += 1;
+        }
+        fills.clear();
+        book.add_order(
+            Order {
+                id,
+                side: Side::Buy,
+                price: MID + num_levels,
+                qty: num_levels * 10,
+                order_type: OrderType::Limit,
+            },
+            &mut fills,
+        );
+        id += 1;
+    });
+}
+
+pub fn profile_market_order(depth: u64) {
+    let (mut book, mut id, mut fills) = fresh_book_asks(depth);
+    let refill_at = (depth / 4).max(10) as usize;
+
+    profile_loop(WARMUP, ITERS, || {
+        if book.len() < refill_at {
+            let fresh = fresh_book_asks(depth);
+            book = fresh.0;
+            id = fresh.1;
+            fills = fresh.2;
+        }
+        fills.clear();
+        book.add_order(
+            Order {
+                id,
+                side: Side::Buy,
+                price: 0,
+                qty: 1,
+                order_type: OrderType::Market,
+            },
+            &mut fills,
+        );
+        id += 1;
+    });
+}
+
+pub fn profile_cancel(depth: u64) {
+    let (mut book, mut id, _) = fresh_book_both(depth);
+    let mut cancel_id = id - depth;
+
+    profile_loop(WARMUP, ITERS, || {
+        if cancel_id >= id {
+            let fresh = fresh_book_both(depth);
+            book = fresh.0;
+            id = fresh.1;
+            cancel_id = id - depth;
+        }
+        book.cancel(cancel_id);
+        cancel_id += 1;
+    });
+}
+
+pub fn profile_cancel_hot_level(orders_per_level: u64) {
+    let mut fills = Vec::with_capacity(4);
+    let mut id = 1u64;
+    let price = MID + SPREAD;
+    let iters = ITERS.min(orders_per_level);
+
+    let mut book = OrderBook::new();
+
+    let mut seed = |book: &mut OrderBook, id: &mut u64| -> u64 {
+        let fid = *id;
+        for _ in 0..WARMUP + orders_per_level {
+            fills.clear();
+            book.add_order(
+                Order {
+                    id: *id,
+                    side: Side::Sell,
+                    price,
+                    qty: 10,
+                    order_type: OrderType::Limit,
+                },
+                &mut fills,
+            );
+            *id += 1;
+        }
+        fid
+    };
+
+    let mut cancel_id = seed(&mut book, &mut id);
+
+    profile_loop(WARMUP, iters, || {
+        if cancel_id >= id {
+            book = OrderBook::new();
+            cancel_id = seed(&mut book, &mut id);
+        }
+        book.cancel(cancel_id);
+        cancel_id += 1;
+    });
+}
+
+pub fn profile_drain_single_level(orders: u64) {
+    let mut fills = Vec::with_capacity(orders as usize);
+    let mut id = 1u64;
+    let price = MID + SPREAD;
+
+    profile_loop(WARMUP, SWEEP_ITERS, || {
+        let mut book = OrderBook::with_capacity(orders as usize);
+        for _ in 0..orders {
+            fills.clear();
+            book.add_order(
+                Order {
+                    id,
+                    side: Side::Sell,
+                    price,
+                    qty: 1,
+                    order_type: OrderType::Limit,
+                },
+                &mut fills,
+            );
+            id += 1;
+        }
+        fills.clear();
+        book.add_order(
+            Order {
+                id,
+                side: Side::Buy,
+                price,
+                qty: orders,
+                order_type: OrderType::Limit,
+            },
+            &mut fills,
+        );
+        id += 1;
+    });
+}
+
+pub fn profile_mixed_workload(depth: u64) {
+    let mut fills = Vec::with_capacity(8);
+    let mut id = 1u64;
+    let mut book = OrderBook::with_capacity(depth as usize);
+    seed_both(&mut book, depth, &mut id, &mut fills);
+
+    let ring_cap = depth.max(4096) as usize;
+    let mut cancel_ring: Vec<u64> = (1..=depth).collect();
+    let mut ring_idx: usize = 0;
+
+    profile_loop(WARMUP, ITERS, || {
+        if book.len() < 50 {
+            book = OrderBook::with_capacity(depth as usize);
+            id = 1;
+            seed_both(&mut book, depth, &mut id, &mut fills);
+            cancel_ring = (1..=depth).collect();
+            ring_idx = 0;
+        }
+
+        let roll = id % 20;
+
+        if roll < 13 {
+            if !cancel_ring.is_empty() {
+                let cid = cancel_ring[ring_idx % cancel_ring.len()];
+                book.cancel(cid);
+                ring_idx += 1;
+            }
+        } else if roll < 18 {
+            let (side, price) = if id.is_multiple_of(2) {
+                (Side::Buy, MID - SPREAD - 200 - (id % 100))
+            } else {
+                (Side::Sell, MID + SPREAD + 200 + (id % 100))
+            };
+            fills.clear();
+            book.add_order(
+                Order {
+                    id,
+                    side,
+                    price,
+                    qty: 10,
+                    order_type: OrderType::Limit,
+                },
+                &mut fills,
+            );
+            if cancel_ring.len() < ring_cap {
+                cancel_ring.push(id);
+            } else {
+                cancel_ring[ring_idx % ring_cap] = id;
+            }
+        } else {
+            let (side, price) = if id.is_multiple_of(2) {
+                (Side::Buy, MID + SPREAD + 200)
+            } else {
+                (Side::Sell, MID - SPREAD - 200)
+            };
+            fills.clear();
+            book.add_order(
+                Order {
+                    id,
+                    side,
+                    price,
+                    qty: 1,
+                    order_type: OrderType::Limit,
+                },
+                &mut fills,
+            );
+        }
+
+        id += 1;
+    });
 }
