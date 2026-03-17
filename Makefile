@@ -1,6 +1,7 @@
 CARGO      = cargo
 BIN        = target/release/matching-engine
 RUSTFLAGS  = -C target-cpu=native
+RUN        = $(if $(CPU),taskset -c $(CPU) ,)$(BIN)
 
 export RUSTFLAGS
 
@@ -21,18 +22,15 @@ fmt:
 pr: test clippy fmt
 
 bench: build
-	$(BIN) bench
+	$(RUN) bench
 
 bench-scenario: build
-	@test -n "$(SCENARIO)" || (echo "usage: make bench-scenario SCENARIO=<name> [DEPTH=n] [LEVELS=n] [ORDERS=n]"; exit 1)
-	$(BIN) bench --scenario $(SCENARIO) $(if $(DEPTH),--depth $(DEPTH),) $(if $(LEVELS),--levels $(LEVELS),) $(if $(ORDERS),--orders $(ORDERS),)
+	@test -n "$(SCENARIO)" || (echo "usage: make bench-scenario SCENARIO=<name> [DEPTH=n] [LEVELS=n] [ORDERS=n] [CPU=n]"; exit 1)
+	$(RUN) bench --scenario $(SCENARIO) $(if $(DEPTH),--depth $(DEPTH),) $(if $(LEVELS),--levels $(LEVELS),) $(if $(ORDERS),--orders $(ORDERS),)
 
 profile-scenario: build
-	@test -n "$(SCENARIO)" || (echo "usage: make profile-scenario SCENARIO=<name> [DEPTH=n] [LEVELS=n] [ORDERS=n]"; exit 1)
-	$(BIN) profile --scenario $(SCENARIO) $(if $(DEPTH),--depth $(DEPTH),) $(if $(LEVELS),--levels $(LEVELS),) $(if $(ORDERS),--orders $(ORDERS),)
-
-bench-pin: build
-	taskset -c $(or $(word 2,$(MAKECMDGOALS)),0) $(BIN) bench
+	@test -n "$(SCENARIO)" || (echo "usage: make profile-scenario SCENARIO=<name> [DEPTH=n] [LEVELS=n] [ORDERS=n] [CPU=n]"; exit 1)
+	$(RUN) profile --scenario $(SCENARIO) $(if $(DEPTH),--depth $(DEPTH),) $(if $(LEVELS),--levels $(LEVELS),) $(if $(ORDERS),--orders $(ORDERS),)
 
 %:
 	@:
