@@ -73,4 +73,11 @@ pub struct ProfileArgs {
         long
     )]
     pub orders: Option<u64>,
+
+    #[arg(
+        long,
+        default_value_t = 1,
+        help = "Repeat the selected workload N times in one process"
+    )]
+    pub repeat: u64,
 }

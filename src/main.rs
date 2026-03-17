@@ -17,51 +17,54 @@ fn values(custom: Option<u64>, defaults: &[u64]) -> Vec<u64> {
 
 fn run_profile(args: &ProfileArgs) {
     let t0 = Instant::now();
-    match args.scenario {
-        Scenario::PassiveInsert => {
-            for d in values(args.depth, &[0u64, 100, 10_000, 100_000]) {
-                scenarios::profile_passive_insert(d);
+    for _ in 0..args.repeat {
+        match args.scenario {
+            Scenario::PassiveInsert => {
+                for d in values(args.depth, &[0u64, 100, 10_000, 100_000]) {
+                    scenarios::profile_passive_insert(d);
+                }
             }
-        }
-        Scenario::AggressiveFill => {
-            for d in values(args.depth, &[100u64, 10_000, 100_000]) {
-                scenarios::profile_aggressive_fill(d);
+            Scenario::AggressiveFill => {
+                for d in values(args.depth, &[100u64, 10_000, 100_000]) {
+                    scenarios::profile_aggressive_fill(d);
+                }
             }
-        }
-        Scenario::MultiLevelSweep => {
-            for l in values(args.levels, &[1u64, 5, 10, 50]) {
-                scenarios::profile_multi_level_sweep(l);
+            Scenario::MultiLevelSweep => {
+                for l in values(args.levels, &[1u64, 5, 10, 50]) {
+                    scenarios::profile_multi_level_sweep(l);
+                }
             }
-        }
-        Scenario::MarketOrder => {
-            for d in values(args.depth, &[100u64, 10_000, 100_000]) {
-                scenarios::profile_market_order(d);
+            Scenario::MarketOrder => {
+                for d in values(args.depth, &[100u64, 10_000, 100_000]) {
+                    scenarios::profile_market_order(d);
+                }
             }
-        }
-        Scenario::Cancel => {
-            for d in values(args.depth, &[100u64, 10_000, 100_000]) {
-                scenarios::profile_cancel(d);
+            Scenario::Cancel => {
+                for d in values(args.depth, &[100u64, 10_000, 100_000]) {
+                    scenarios::profile_cancel(d);
+                }
             }
-        }
-        Scenario::CancelHotLevel => {
-            for n in values(args.orders, &[10u64, 100, 1_000, 10_000]) {
-                scenarios::profile_cancel_hot_level(n);
+            Scenario::CancelHotLevel => {
+                for n in values(args.orders, &[10u64, 100, 1_000, 10_000]) {
+                    scenarios::profile_cancel_hot_level(n);
+                }
             }
-        }
-        Scenario::DrainSingleLevel => {
-            for n in values(args.orders, &[10u64, 50, 100, 500, 1_000]) {
-                scenarios::profile_drain_single_level(n);
+            Scenario::DrainSingleLevel => {
+                for n in values(args.orders, &[10u64, 50, 100, 500, 1_000]) {
+                    scenarios::profile_drain_single_level(n);
+                }
             }
-        }
-        Scenario::MixedWorkload => {
-            for d in values(args.depth, &[100u64, 10_000, 100_000]) {
-                scenarios::profile_mixed_workload(d);
+            Scenario::MixedWorkload => {
+                for d in values(args.depth, &[100u64, 10_000, 100_000]) {
+                    scenarios::profile_mixed_workload(d);
+                }
             }
         }
     }
     eprintln!(
-        "profile complete: scenario={} elapsed={:.2?}",
+        "profile complete: scenario={} repeat={} elapsed={:.2?}",
         args.scenario.to_possible_value().unwrap().get_name(),
+        args.repeat,
         t0.elapsed()
     );
 }
