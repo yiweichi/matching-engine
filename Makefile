@@ -1,14 +1,18 @@
 CARGO      = cargo
 BIN        = target/release/matching-engine
 RUSTFLAGS  = -C target-cpu=native
+PROF_ENV   = CARGO_PROFILE_RELEASE_STRIP=none CARGO_PROFILE_RELEASE_DEBUG=1 RUSTFLAGS="$(RUSTFLAGS) -C force-frame-pointers=yes"
 RUN        = $(if $(CPU),taskset -c $(CPU) ,)$(BIN)
 
 export RUSTFLAGS
 
-.PHONY: build test clippy fmt pr bench bench-scenario profile-scenario bench-pin clean
+.PHONY: build build-prof test clippy fmt pr bench bench-scenario profile-scenario bench-pin clean
 
 build:
 	$(CARGO) build --release
+
+build-prof:
+	$(PROF_ENV) $(CARGO) build --release
 
 test:
 	$(CARGO) test

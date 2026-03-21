@@ -1,0 +1,35 @@
+=== Matching Engine Latency Benchmark ===
+    git: e0e04de (dirty)
+    warmup=2000  iters=200000  sweep_iters=50000
+
+── Passive Insert (ns) ───────────────────────────────────────────────────────────────────
+                                p50        p99      p99.9     p99.99        min        max
+  ────────────────────────────────────────────────────────────────────────────────────────
+  depth=100K                     42        125      1,750      3,585          0  2,238,463
+    depth=100K: initial_arena_capacity=102000 initial_locations_capacity=114688 arena_grow_count=2 locations_grow_count=2
+      slow iter=127376 elapsed=2237709ns did_arena_grow=false arena_capacity=408000=>408000 arena_grow_count=2 did_locations_grow=true locations_capacity=229376=>458752 locations_grow_count=2
+      slow iter=102000 elapsed=1625625ns did_arena_grow=true arena_capacity=204000=>408000 arena_grow_count=2 did_locations_grow=false locations_capacity=229376=>229376 locations_grow_count=1
+      slow iter=12688 elapsed=820292ns did_arena_grow=false arena_capacity=204000=>204000 arena_grow_count=1 did_locations_grow=true locations_capacity=114688=>229376 locations_grow_count=1
+      slow iter=0 elapsed=274083ns did_arena_grow=true arena_capacity=102000=>204000 arena_grow_count=1 did_locations_grow=false locations_capacity=114688=>114688 locations_grow_count=0
+      slow iter=91052 elapsed=8625ns did_arena_grow=false arena_capacity=204000=>204000 arena_grow_count=1 did_locations_grow=false locations_capacity=229376=>229376 locations_grow_count=1
+      slow iter=66960 elapsed=7500ns did_arena_grow=false arena_capacity=204000=>204000 arena_grow_count=1 did_locations_grow=false locations_capacity=229376=>229376 locations_grow_count=1
+      slow iter=102010 elapsed=7167ns did_arena_grow=false arena_capacity=408000=>408000 arena_grow_count=2 did_locations_grow=false locations_capacity=229376=>229376 locations_grow_count=1
+      slow iter=122768 elapsed=7000ns did_arena_grow=false arena_capacity=408000=>408000 arena_grow_count=2 did_locations_grow=false locations_capacity=229376=>229376 locations_grow_count=1
+      slow iter=196496 elapsed=7000ns did_arena_grow=false arena_capacity=408000=>408000 arena_grow_count=2 did_locations_grow=false locations_capacity=458752=>458752 locations_grow_count=2
+      slow iter=10640 elapsed=6250ns did_arena_grow=false arena_capacity=204000=>204000 arena_grow_count=1 did_locations_grow=false locations_capacity=114688=>114688 locations_grow_count=0
+      slow iter=128515 elapsed=5500ns did_arena_grow=false arena_capacity=408000=>408000 arena_grow_count=2 did_locations_grow=false locations_capacity=458752=>458752 locations_grow_count=2
+      slow iter=127933 elapsed=4875ns did_arena_grow=false arena_capacity=408000=>408000 arena_grow_count=2 did_locations_grow=false locations_capacity=458752=>458752 locations_grow_count=2
+      slow iter=128038 elapsed=4875ns did_arena_grow=false arena_capacity=408000=>408000 arena_grow_count=2 did_locations_grow=false locations_capacity=458752=>458752 locations_grow_count=2
+      slow iter=102002 elapsed=4834ns did_arena_grow=false arena_capacity=408000=>408000 arena_grow_count=2 did_locations_grow=false locations_capacity=229376=>229376 locations_grow_count=1
+      slow iter=127654 elapsed=4833ns did_arena_grow=false arena_capacity=408000=>408000 arena_grow_count=2 did_locations_grow=false locations_capacity=458752=>458752 locations_grow_count=2
+      slow iter=102015 elapsed=4667ns did_arena_grow=false arena_capacity=408000=>408000 arena_grow_count=2 did_locations_grow=false locations_capacity=229376=>229376 locations_grow_count=1
+      slow iter=128237 elapsed=4417ns did_arena_grow=false arena_capacity=408000=>408000 arena_grow_count=2 did_locations_grow=false locations_capacity=458752=>458752 locations_grow_count=2
+      slow iter=102009 elapsed=4208ns did_arena_grow=false arena_capacity=408000=>408000 arena_grow_count=2 did_locations_grow=false locations_capacity=229376=>229376 locations_grow_count=1
+      slow iter=102004 elapsed=3750ns did_arena_grow=false arena_capacity=408000=>408000 arena_grow_count=2 did_locations_grow=false locations_capacity=229376=>229376 locations_grow_count=1
+      slow iter=102003 elapsed=3667ns did_arena_grow=false arena_capacity=408000=>408000 arena_grow_count=2 did_locations_grow=false locations_capacity=229376=>229376 locations_grow_count=1
+
+── Summary ───────────────────────────────────────────
+  Total ops:          200,000
+  Throughput:         7,364,278 ops/sec
+  Latency (all ops):  p50=42 ns  p99=125 ns  p99.9=1,750 ns  max=2,238,463 ns
+  Benchmark time:     27.16ms

@@ -1,0 +1,23 @@
+=== Matching Engine Latency Benchmark ===
+    git: e0e04de (dirty)
+    warmup=2000  iters=200000  sweep_iters=50000
+
+── Passive Insert (ns) ───────────────────────────────────────────────────────────────────
+                                p50        p99      p99.9     p99.99        min        max
+  ────────────────────────────────────────────────────────────────────────────────────────
+  depth=100K                     41         83      1,083      1,458          0     33,087
+    depth=100K: arena_grow_count=0 locations_grow_count=0
+      slow iter=54672 elapsed=33083ns did_arena_grow=false arena_grow_count=0 did_locations_grow=false locations_grow_count=0
+      slow iter=183184 elapsed=22375ns did_arena_grow=false arena_grow_count=0 did_locations_grow=false locations_grow_count=0
+      slow iter=76014 elapsed=13583ns did_arena_grow=false arena_grow_count=0 did_locations_grow=false locations_grow_count=0
+      slow iter=66960 elapsed=9250ns did_arena_grow=false arena_grow_count=0 did_locations_grow=false locations_grow_count=0
+      slow iter=198032 elapsed=8792ns did_arena_grow=false arena_grow_count=0 did_locations_grow=false locations_grow_count=0
+      slow iter=67042 elapsed=4542ns did_arena_grow=false arena_grow_count=0 did_locations_grow=false locations_grow_count=0
+      slow iter=91024 elapsed=4334ns did_arena_grow=false arena_grow_count=0 did_locations_grow=false locations_grow_count=0
+      slow iter=164752 elapsed=4208ns did_arena_grow=false arena_grow_count=0 did_locations_grow=false locations_grow_count=0
+
+── Summary ───────────────────────────────────────────
+  Total ops:          200,000
+  Throughput:         11,087,908 ops/sec
+  Latency (all ops):  p50=41 ns  p99=83 ns  p99.9=1,083 ns  max=33,087 ns
+  Benchmark time:     18.04ms
