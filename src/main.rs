@@ -194,7 +194,7 @@ fn run_bench(r: &mut Reporter, args: &BenchArgs) {
 }
 
 fn try_mlockall() {
-    #[cfg(target_os = "linux")]
+    #[cfg(unix)]
     unsafe {
         if libc::mlockall(libc::MCL_CURRENT | libc::MCL_FUTURE) != 0 {
             let err = std::io::Error::last_os_error();

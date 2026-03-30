@@ -633,7 +633,6 @@ pub fn profile_mixed_workload(depth: u64) {
             cancel_ring = (1..=depth).collect();
             ring_idx = 0;
         }
-
         let roll = id % 20;
 
         if roll < 13 {

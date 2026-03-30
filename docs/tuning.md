@@ -25,7 +25,6 @@ Observed impact on `Passive Insert` (`bench --scenario passive-insert --depth 10
 This run showed the biggest improvement at `p99.99`, with a smaller but still visible gain
 at `p99.9`. That pattern is consistent with pinning reducing scheduler migration and
 interrupt-driven outliers more than it changes the median hot-path cost.
-
 ## Core Isolation
 
 Remove a core from the kernel scheduler entirely so only `taskset` can use it.
@@ -226,7 +225,6 @@ For this workload, fixed base frequency was not a good tradeoff. It is useful as
 diagnostic experiment to test whether turbo/frequency scaling is the tail source,
 but if median latency degrades sharply and `p99.99` stays flat, the dominant tail
 cause is likely elsewhere.
-
 ## Memory Locking (mlockall)
 
 Prevent page faults during execution by locking all pages into RAM.
