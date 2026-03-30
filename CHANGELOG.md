@@ -53,3 +53,9 @@ Key improvements vs 2026-03-05 (Linux):
 - Fixed unused variable warnings in benchmark scenarios (`fills`, `first_id`)
 - Removed `target-cpu=native` — has negligible effect on this workload because the hot path is memory-bound (pointer chasing in HashMap, BTreeMap, arena linked list), not compute-bound; there is almost nothing for SIMD to vectorize
 - Evaluated `lto`, `codegen-units = 1`, `opt-level = 3` — kept for correctness but measured no observable latency improvement; the crate is small (single crate, all hot functions already visible to the optimizer) and the bottleneck is memory access patterns, not instruction throughput
+
+## 2026-03-16 — Benchmark methodology cleanup
+
+- Removed setup work from timed sections in `multi_level_sweep` and `drain_single_level`
+- Benchmarks now time only the target matching operation, not per-iteration `OrderBook` construction or scenario seeding
+- This makes p99/p99.9/max more representative of steady-state hot-path latency instead of scenario setup cost
