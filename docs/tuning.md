@@ -17,6 +17,15 @@ make bench-pin 1
 **Why avoid CPU 0:** Linux routes timer ticks, hardware IRQs, RCU callbacks, and softirqs
 to CPU 0 by default. Pinning your workload elsewhere reduces interrupt-driven tail latency.
 
+Observed impact on `Passive Insert` (`bench --scenario passive-insert --depth 100000`):
+
+- Unpinned: `p99=53 ns`, `p99.9=71 ns`, `p99.99=2,435 ns`, `max=10,223 ns`
+- Pinned to `CPU 4`: `p99=50 ns`, `p99.9=60 ns`, `p99.99=250 ns`, `max=7,955 ns`
+
+This run showed the biggest improvement at `p99.99`, with a smaller but still visible gain
+at `p99.9`. That pattern is consistent with pinning reducing scheduler migration and
+interrupt-driven outliers more than it changes the median hot-path cost.
+
 ## Core Isolation
 
 Remove a core from the kernel scheduler entirely so only `taskset` can use it.
@@ -28,6 +37,7 @@ Bare metal only — most cloud VMs don't expose kernel boot params.
 # /etc/default/grub
 GRUB_CMDLINE_LINUX="isolcpus=2,3"
 ```
+# sudo update-grub
 
 After this, CPUs 2 and 3 are invisible to the scheduler. No process will be placed
 on them unless explicitly pinned via `taskset` or `sched_setaffinity`.
@@ -206,6 +216,16 @@ done
 # Verify frequency is fixed
 watch -n1 "cat /proc/cpuinfo | grep 'cpu MHz'"
 ```
+
+Observed result on `Passive Insert`:
+
+- Locking the benchmark core to base frequency made `p50` roughly 2x worse
+- `p99.99` did not improve in a meaningful way
+
+For this workload, fixed base frequency was not a good tradeoff. It is useful as a
+diagnostic experiment to test whether turbo/frequency scaling is the tail source,
+but if median latency degrades sharply and `p99.99` stays flat, the dominant tail
+cause is likely elsewhere.
 
 ## Memory Locking (mlockall)
 
