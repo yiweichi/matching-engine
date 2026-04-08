@@ -25,6 +25,11 @@ Observed impact on `Passive Insert` (`bench --scenario passive-insert --depth 10
 This run showed the biggest improvement at `p99.99`, with a smaller but still visible gain
 at `p99.9`. That pattern is consistent with pinning reducing scheduler migration and
 interrupt-driven outliers more than it changes the median hot-path cost.
+
+When validating a pinned setup, use `cat /proc/interrupts` before and during the run.
+The goal is to make the target CPU's interrupt column as quiet as possible. If the pinned
+CPU still accumulates timer, NIC, storage, or other device interrupts, tail latency can
+remain noisy even when `taskset` affinity is correct.
 ## Core Isolation
 
 Remove a core from the kernel scheduler entirely so only `taskset` can use it.
@@ -104,8 +109,17 @@ ps -eo pid,comm | grep rcuo
 **Combined boot parameters** (recommended full setup):
 
 ```bash
-GRUB_CMDLINE_LINUX="isolcpus=2,3 nohz_full=2,3 rcu_nocbs=2,3"
+GRUB_CMDLINE_LINUX="isolcpus=2,3 nohz_full=2,3 rcu_nocbs=2,3 irqaffinity=0 nosmt"
 ```
+
+For a single benchmark core, a compact variant that worked well in practice was:
+
+```bash
+GRUB_CMDLINE_LINUX="isolcpus=1 nohz_full=1 rcu_nocbs=1 nosmt irqaffinity=0"
+```
+
+Here, `irqaffinity=0` keeps default IRQ routing on the housekeeping CPU instead of the
+isolated benchmark CPU, and `nosmt` removes sibling contention entirely.
 
 After editing, apply and reboot:
 
@@ -127,6 +141,10 @@ cat /proc/interrupts
 # Show affinity for a specific IRQ
 cat /proc/irq/42/smp_affinity_list
 ```
+
+Use `/proc/interrupts` as the ground-truth verification step after every change. After
+setting boot params or manual affinity, rerun `cat /proc/interrupts` and confirm the
+benchmark CPU shows little to no growth for device IRQs while the workload is running.
 
 ### Set affinity
 
@@ -165,6 +183,7 @@ For low-latency runs:
 - Disable `irqbalance`
 - Manually pin device IRQs to housekeeping CPUs
 - Keep the benchmark core out of the IRQ mask
+- Recheck `cat /proc/interrupts` until the benchmark core is as quiet as possible
 
 You can move most device interrupts away, but not eliminate all interrupts on
 that core. Local timer events, IPIs, NMIs, and other per-CPU kernel work still
@@ -307,7 +326,9 @@ numactl --cpunodebind=0 --membind=0 target/release/matching-engine
 [ ] Core isolated (isolcpus or cpuset partition)
 [ ] Tickless (nohz_full on benchmark core)
 [ ] RCU offloaded (rcu_nocbs on benchmark core)
+[ ] Default IRQ routing kept on housekeeping CPUs (irqaffinity)
 [ ] IRQs steered to CPU 0 (smp_affinity, irqbalance off)
+[ ] `/proc/interrupts` checked and benchmark CPU is quiet
 [ ] HT sibling offlined or nosmt
 [ ] CPU frequency fixed (performance governor, no turbo)
 [ ] Memory locked (mlockall, ulimit -l unlimited)
