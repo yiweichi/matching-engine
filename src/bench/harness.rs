@@ -109,7 +109,7 @@ impl Reporter {
             fmt_ns(hist.value_at_percentile(99.0)),
             fmt_ns(hist.value_at_percentile(99.9)),
             fmt_ns(hist.value_at_percentile(99.99)),
-            fmt_ns(hist.min()),
+            fmt_ns(hist.min_nz()),
             fmt_ns(hist.max()),
         );
         println!("{line}");
