@@ -701,3 +701,55 @@ pub fn profile_timer_only() {
         std::hint::black_box(&mut x);
     });
 }
+
+// ── Timer-rdtsc (noise floor without clock_gettime) ─────────────
+
+#[cfg(target_arch = "x86_64")]
+fn calibrate_tsc_ghz() -> f64 {
+    let t0 = Instant::now();
+    let c0 = unsafe { core::arch::x86_64::_rdtsc() };
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    let c1 = unsafe { core::arch::x86_64::_rdtsc() };
+    let elapsed_ns = t0.elapsed().as_nanos() as f64;
+    (c1 - c0) as f64 / elapsed_ns
+}
+
+#[cfg(target_arch = "x86_64")]
+fn timed_loop_rdtsc(
+    warmup: u64,
+    iters: u64,
+    cycles_per_ns: f64,
+    mut body: impl FnMut(),
+) -> Histogram<u64> {
+    let mut hist = new_hist();
+    for i in 0..(warmup + iters) {
+        let c0 = unsafe { core::arch::x86_64::_rdtsc() };
+        body();
+        let c1 = unsafe { core::arch::x86_64::_rdtsc() };
+        if i >= warmup {
+            let ns = ((c1 - c0) as f64 / cycles_per_ns) as u64;
+            hist.record(ns).ok();
+        }
+    }
+    hist
+}
+
+#[cfg(target_arch = "x86_64")]
+pub fn timer_rdtsc() -> Histogram<u64> {
+    let cpns = calibrate_tsc_ghz();
+    eprintln!(
+        "  TSC calibration: {:.3} cycles/ns ({:.0} MHz)",
+        cpns,
+        cpns * 1000.0
+    );
+    let mut x = 0u64;
+    timed_loop_rdtsc(WARMUP, ITERS, cpns, || {
+        std::hint::black_box(&mut x);
+    })
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+pub fn timer_rdtsc() -> Histogram<u64> {
+    eprintln!("  rdtsc not available on this architecture, falling back to Instant");
+    timer_only()
+}

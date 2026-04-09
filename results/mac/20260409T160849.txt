@@ -1,0 +1,14 @@
+=== Matching Engine Latency Benchmark ===
+    git: 59cbe61 (dirty)
+    warmup=2000  iters=200000  sweep_iters=50000
+
+── Timer Only (noise floor) (ns) ─────────────────────────────────────────────────────────
+                                p50        p99      p99.9     p99.99        min        max
+  ────────────────────────────────────────────────────────────────────────────────────────
+  noop                            0         42         42        250         41        292
+
+── Summary ───────────────────────────────────────────
+  Total ops:          200,000
+  Throughput:         23,293,622 ops/sec
+  Latency (all ops):  p50=0 ns  p99=42 ns  p99.9=42 ns  max=292 ns
+  Benchmark time:     8.59ms

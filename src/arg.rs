@@ -11,6 +11,7 @@ pub enum Scenario {
     DrainSingleLevel,
     MixedWorkload,
     TimerOnly,
+    TimerRdtsc,
 }
 
 #[derive(Debug, Parser)]
