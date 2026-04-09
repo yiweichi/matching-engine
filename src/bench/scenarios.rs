@@ -685,3 +685,19 @@ pub fn profile_mixed_workload(depth: u64) {
         id += 1;
     });
 }
+
+// ── Timer-only (noise floor) ────────────────────────────────────
+
+pub fn timer_only() -> Histogram<u64> {
+    let mut x = 0u64;
+    timed_loop(WARMUP, ITERS, || {
+        std::hint::black_box(&mut x);
+    })
+}
+
+pub fn profile_timer_only() {
+    let mut x = 0u64;
+    profile_loop(WARMUP, ITERS, || {
+        std::hint::black_box(&mut x);
+    });
+}

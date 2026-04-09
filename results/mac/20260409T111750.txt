@@ -1,0 +1,14 @@
+=== Matching Engine Latency Benchmark ===
+    git: cc659ab (dirty)
+    warmup=2000  iters=200000  sweep_iters=50000
+
+── Passive Insert (ns) ───────────────────────────────────────────────────────────────────
+                                p50        p99      p99.9     p99.99        min        max
+  ────────────────────────────────────────────────────────────────────────────────────────
+  depth=100K                     41         42      1,125      4,543         41     33,567
+
+── Summary ───────────────────────────────────────────
+  Total ops:          200,000
+  Throughput:         13,162,440 ops/sec
+  Latency (all ops):  p50=41 ns  p99=42 ns  p99.9=1,125 ns  max=33,567 ns
+  Benchmark time:     15.19ms

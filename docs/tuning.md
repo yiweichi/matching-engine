@@ -214,6 +214,27 @@ Use this selectively. Disabling SMT often helps tail latency when the sibling
 thread is busy, but it reduces total throughput and is not always necessary if
 the sibling is already idle or isolated.
 
+## Disable Deep C-States
+
+Deep idle states save power but add exit latency when the CPU has to wake up
+for work again. That transition can show up as tail-latency jitter in short
+benchmarks.
+
+To keep the benchmark core in shallow/no idle states, disable the deeper
+`cpuidle` states for the pinned CPU:
+
+```bash
+for i in /sys/devices/system/cpu/cpu1/cpuidle/state{1..8}/disable; do
+  echo 1 | sudo tee "$i"
+done
+```
+
+Notes:
+
+- Run this on the benchmark CPU only, not necessarily every CPU
+- The available state numbers are machine-dependent; check `ls /sys/devices/system/cpu/cpu1/cpuidle/`
+- Reboot restores the default state unless you persist it with a boot-time script
+
 ## Fixed CPU Frequency
 
 Turbo boost and frequency scaling introduce measurement variance.
@@ -330,6 +351,7 @@ numactl --cpunodebind=0 --membind=0 target/release/matching-engine
 [ ] IRQs steered to CPU 0 (smp_affinity, irqbalance off)
 [ ] `/proc/interrupts` checked and benchmark CPU is quiet
 [ ] HT sibling offlined or nosmt
+[ ] Deep C-states disabled on benchmark CPU
 [ ] CPU frequency fixed (performance governor, no turbo)
 [ ] Memory locked (mlockall, ulimit -l unlimited)
 [ ] NUMA-local allocation (numactl --membind)
@@ -346,6 +368,11 @@ SIBLING=19           # HT sibling of $CPU (check topology first)
 
 # Offline HT sibling
 echo 0 > /sys/devices/system/cpu/cpu${SIBLING}/online
+
+# Disable deeper C-states on the benchmark CPU
+for f in /sys/devices/system/cpu/cpu${CPU}/cpuidle/state{1..8}/disable; do
+  [ -w "$f" ] && echo 1 > "$f"
+done
 
 # Performance governor
 for f in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do

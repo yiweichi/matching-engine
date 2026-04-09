@@ -10,6 +10,7 @@ pub enum Scenario {
     CancelHotLevel,
     DrainSingleLevel,
     MixedWorkload,
+    TimerOnly,
 }
 
 #[derive(Debug, Parser)]

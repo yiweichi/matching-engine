@@ -59,6 +59,9 @@ fn run_profile(args: &ProfileArgs) {
                     scenarios::profile_mixed_workload(d);
                 }
             }
+            Scenario::TimerOnly => {
+                scenarios::profile_timer_only();
+            }
         }
     }
     eprintln!(
@@ -189,6 +192,10 @@ fn run_bench(r: &mut Reporter, args: &BenchArgs) {
                     &scenarios::mixed_workload(d),
                 );
             }
+        }
+        Some(Scenario::TimerOnly) => {
+            r.section("Timer Only (noise floor)");
+            r.row("noop", &scenarios::timer_only());
         }
     }
 }
