@@ -132,17 +132,56 @@ fn fresh_book_asks(depth: u64) -> (OrderBook, u64, Vec<Fill>) {
     (book, id, fills)
 }
 
+const OUTLIER_THRESHOLD_NS: u64 = 1_000;
+
+struct OutlierTracker {
+    outliers: Vec<(u64, u64)>,
+    iter: u64,
+}
+
+impl OutlierTracker {
+    fn new() -> Self {
+        Self {
+            outliers: Vec::new(),
+            iter: 0,
+        }
+    }
+
+    #[inline(always)]
+    fn record(&mut self, hist: &mut Histogram<u64>, ns: u64) {
+        hist.record(ns).ok();
+        if ns >= OUTLIER_THRESHOLD_NS {
+            self.outliers.push((self.iter, ns));
+        }
+        self.iter += 1;
+    }
+
+    fn report(&self) {
+        if !self.outliers.is_empty() {
+            eprintln!(
+                "  outliers (>{OUTLIER_THRESHOLD_NS}ns): {}",
+                self.outliers.len()
+            );
+            for &(iter, ns) in &self.outliers {
+                eprintln!("    iter={iter:<8} {ns}ns");
+            }
+        }
+    }
+}
+
 /// Shared timing loop: runs `warmup + iters` iterations, records only after warmup.
 fn timed_loop(warmup: u64, iters: u64, mut body: impl FnMut()) -> Histogram<u64> {
     timer::calibrate();
     let mut hist = new_hist();
+    let mut ot = OutlierTracker::new();
     for i in 0..(warmup + iters) {
-        let t = timer::start();
+        let t: timer::TimerStart = timer::start();
         body();
         if i >= warmup {
-            hist.record(timer::elapsed_ns(t)).ok();
+            ot.record(&mut hist, timer::elapsed_ns(t));
         }
     }
+    ot.report();
     hist
 }
 
@@ -187,6 +226,7 @@ pub fn aggressive_fill(depth: u64) -> Histogram<u64> {
     let (mut book, mut id, mut fills) = fresh_book_asks(depth);
     let refill_at = (depth / 4).max(10) as usize;
     let mut hist = new_hist();
+    let mut ot = OutlierTracker::new();
 
     for i in 0..(WARMUP + ITERS) {
         if book.len() < refill_at {
@@ -208,10 +248,11 @@ pub fn aggressive_fill(depth: u64) -> Histogram<u64> {
             &mut fills,
         );
         if i >= WARMUP {
-            hist.record(timer::elapsed_ns(t)).ok();
+            ot.record(&mut hist, timer::elapsed_ns(t));
         }
         id += 1;
     }
+    ot.report();
     hist
 }
 
@@ -220,6 +261,7 @@ pub fn multi_level_sweep(num_levels: u64) -> Histogram<u64> {
     let mut fills = Vec::with_capacity(num_levels as usize);
     let mut id = 1u64;
     let mut hist = new_hist();
+    let mut ot = OutlierTracker::new();
 
     for i in 0..(WARMUP + SWEEP_ITERS) {
         let mut book = OrderBook::with_capacity(num_levels as usize);
@@ -250,11 +292,12 @@ pub fn multi_level_sweep(num_levels: u64) -> Histogram<u64> {
             &mut fills,
         );
         if i >= WARMUP {
-            hist.record(timer::elapsed_ns(t)).ok();
+            ot.record(&mut hist, timer::elapsed_ns(t));
         }
         id += 1;
     }
 
+    ot.report();
     hist
 }
 
@@ -263,6 +306,7 @@ pub fn market_order(depth: u64) -> Histogram<u64> {
     let (mut book, mut id, mut fills) = fresh_book_asks(depth);
     let refill_at = (depth / 4).max(10) as usize;
     let mut hist = new_hist();
+    let mut ot = OutlierTracker::new();
 
     for i in 0..(WARMUP + ITERS) {
         if book.len() < refill_at {
@@ -284,10 +328,11 @@ pub fn market_order(depth: u64) -> Histogram<u64> {
             &mut fills,
         );
         if i >= WARMUP {
-            hist.record(timer::elapsed_ns(t)).ok();
+            ot.record(&mut hist, timer::elapsed_ns(t));
         }
         id += 1;
     }
+    ot.report();
     hist
 }
 
@@ -779,4 +824,113 @@ pub fn profile_timer_only() {
 // unified timer module (rdtsc on x86_64, Instant fallback).
 pub fn timer_rdtsc() -> Histogram<u64> {
     timer_only()
+}
+
+/// Tight rdtsc gap detector: stores raw timestamps in a pre-allocated array,
+/// analyzes gaps post-hoc. Zero work between consecutive reads — no histogram,
+/// no branches, no function calls. Any gap >> median is pure system interference.
+///
+/// Outlier report includes time offsets (seconds from measurement start) for
+/// direct correlation with perf script / ftrace timestamps.
+pub fn gap_detector() -> Histogram<u64> {
+    timer::calibrate();
+    let count = (WARMUP + ITERS + 1) as usize;
+    let mut hist = new_hist();
+    let warmup = WARMUP as usize;
+
+    #[cfg(target_arch = "x86_64")]
+    {
+        let cpns = timer::cycles_per_ns();
+        let mut ts = vec![0u64; count];
+
+        for slot in ts.iter_mut() {
+            *slot = unsafe {
+                core::arch::x86_64::_mm_lfence();
+                core::arch::x86_64::_rdtsc()
+            };
+        }
+
+        let base = ts[warmup];
+        let mut outliers: Vec<(usize, u64, f64)> = Vec::new();
+
+        for i in (warmup + 1)..count {
+            let gap_ns = ((ts[i] - ts[i - 1]) as f64 / cpns) as u64;
+            hist.record(gap_ns).ok();
+            if gap_ns >= OUTLIER_THRESHOLD_NS {
+                let offset_s = (ts[i - 1] - base) as f64 / cpns / 1_000_000_000.0;
+                outliers.push((i - warmup, gap_ns, offset_s));
+            }
+        }
+
+        if !outliers.is_empty() {
+            eprintln!(
+                "  outliers (>{OUTLIER_THRESHOLD_NS}ns): {} (offset = seconds from measurement start)",
+                outliers.len()
+            );
+            for &(iter, gap_ns, offset_s) in &outliers {
+                eprintln!("    +{offset_s:.6}s  iter={iter:<8} {gap_ns}ns");
+            }
+        }
+    }
+
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        let epoch = std::time::Instant::now();
+        let mut ts = vec![0u64; count];
+
+        for slot in ts.iter_mut() {
+            *slot = epoch.elapsed().as_nanos() as u64;
+        }
+
+        let base = ts[warmup];
+        let mut outliers: Vec<(usize, u64, f64)> = Vec::new();
+
+        for i in (warmup + 1)..count {
+            let gap_ns = ts[i] - ts[i - 1];
+            hist.record(gap_ns).ok();
+            if gap_ns >= OUTLIER_THRESHOLD_NS {
+                let offset_s = (ts[i - 1] - base) as f64 / 1_000_000_000.0;
+                outliers.push((i - warmup, gap_ns, offset_s));
+            }
+        }
+
+        if !outliers.is_empty() {
+            eprintln!(
+                "  outliers (>{OUTLIER_THRESHOLD_NS}ns): {} (offset = seconds from measurement start)",
+                outliers.len()
+            );
+            for &(iter, gap_ns, offset_s) in &outliers {
+                eprintln!("    +{offset_s:.6}s  iter={iter:<8} {gap_ns}ns");
+            }
+        }
+    }
+
+    hist
+}
+
+pub fn profile_gap_detector() {
+    timer::calibrate();
+    let count = (WARMUP + ITERS + 1) as usize;
+
+    #[cfg(target_arch = "x86_64")]
+    {
+        let mut ts = vec![0u64; count];
+        for slot in ts.iter_mut() {
+            *slot = unsafe {
+                core::arch::x86_64::_mm_lfence();
+                core::arch::x86_64::_rdtsc()
+            };
+        }
+        std::hint::black_box(&ts);
+    }
+
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        let epoch = std::time::Instant::now();
+        let mut ts = vec![0u64; count];
+        for slot in ts.iter_mut() {
+            *slot = epoch.elapsed().as_nanos() as u64;
+        }
+        std::hint::black_box(&ts);
+    }
 }
