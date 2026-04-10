@@ -169,9 +169,20 @@ impl OutlierTracker {
     }
 }
 
+/// Busy-spin to let nohz_full detect the single-task condition and stop the
+/// scheduler tick. On CONFIG_HZ=1000, 2-3 tick periods (3ms) is enough.
+#[inline(never)]
+fn wait_for_nohz() {
+    let start = std::time::Instant::now();
+    while start.elapsed().as_millis() < 3 {
+        std::hint::spin_loop();
+    }
+}
+
 /// Shared timing loop: runs `warmup + iters` iterations, records only after warmup.
 fn timed_loop(warmup: u64, iters: u64, mut body: impl FnMut()) -> Histogram<u64> {
     timer::calibrate();
+    wait_for_nohz();
     let mut hist = new_hist();
     let mut ot = OutlierTracker::new();
     for i in 0..(warmup + iters) {
@@ -834,6 +845,7 @@ pub fn timer_rdtsc() -> Histogram<u64> {
 /// direct correlation with perf script / ftrace timestamps.
 pub fn gap_detector() -> Histogram<u64> {
     timer::calibrate();
+    wait_for_nohz();
     let count = (WARMUP + ITERS + 1) as usize;
     let mut hist = new_hist();
     let warmup = WARMUP as usize;
