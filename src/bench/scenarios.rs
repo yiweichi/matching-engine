@@ -1,9 +1,75 @@
-use std::time::Instant;
-
 use hdrhistogram::Histogram;
 use matching_engine::*;
 
 use super::harness::*;
+
+// ── High-resolution timer (rdtsc on x86_64, Instant fallback) ──
+
+#[cfg(target_arch = "x86_64")]
+mod timer {
+    use std::sync::OnceLock;
+
+    static CYCLES_PER_NS: OnceLock<f64> = OnceLock::new();
+
+    pub fn calibrate() {
+        CYCLES_PER_NS.get_or_init(|| {
+            let t0 = std::time::Instant::now();
+            let c0 = unsafe { core::arch::x86_64::_rdtsc() };
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            let c1 = unsafe { core::arch::x86_64::_rdtsc() };
+            let elapsed_ns = t0.elapsed().as_nanos() as f64;
+            let cpns = (c1 - c0) as f64 / elapsed_ns;
+            eprintln!(
+                "  TSC calibration: {:.3} cycles/ns ({:.0} MHz)",
+                cpns,
+                cpns * 1000.0
+            );
+            cpns
+        });
+    }
+
+    pub fn cycles_per_ns() -> f64 {
+        *CYCLES_PER_NS.get().expect("call timer::calibrate() first")
+    }
+
+    #[derive(Clone, Copy)]
+    pub struct TimerStart(u64);
+
+    #[inline(always)]
+    pub fn start() -> TimerStart {
+        unsafe {
+            core::arch::x86_64::_mm_lfence();
+            TimerStart(core::arch::x86_64::_rdtsc())
+        }
+    }
+
+    #[inline(always)]
+    pub fn elapsed_ns(s: TimerStart) -> u64 {
+        let end = unsafe {
+            core::arch::x86_64::_mm_lfence();
+            core::arch::x86_64::_rdtsc()
+        };
+        ((end - s.0) as f64 / cycles_per_ns()) as u64
+    }
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+mod timer {
+    #[derive(Clone, Copy)]
+    pub struct TimerStart(std::time::Instant);
+
+    pub fn calibrate() {}
+
+    #[inline(always)]
+    pub fn start() -> TimerStart {
+        TimerStart(std::time::Instant::now())
+    }
+
+    #[inline(always)]
+    pub fn elapsed_ns(s: TimerStart) -> u64 {
+        s.0.elapsed().as_nanos() as u64
+    }
+}
 
 // ── Seeding helpers ─────────────────────────────────────────────
 
@@ -68,12 +134,13 @@ fn fresh_book_asks(depth: u64) -> (OrderBook, u64, Vec<Fill>) {
 
 /// Shared timing loop: runs `warmup + iters` iterations, records only after warmup.
 fn timed_loop(warmup: u64, iters: u64, mut body: impl FnMut()) -> Histogram<u64> {
+    timer::calibrate();
     let mut hist = new_hist();
     for i in 0..(warmup + iters) {
-        let t = Instant::now();
+        let t = timer::start();
         body();
         if i >= warmup {
-            hist.record(t.elapsed().as_nanos() as u64).ok();
+            hist.record(timer::elapsed_ns(t)).ok();
         }
     }
     hist
@@ -116,6 +183,7 @@ pub fn passive_insert(depth: u64) -> Histogram<u64> {
 }
 
 pub fn aggressive_fill(depth: u64) -> Histogram<u64> {
+    timer::calibrate();
     let (mut book, mut id, mut fills) = fresh_book_asks(depth);
     let refill_at = (depth / 4).max(10) as usize;
     let mut hist = new_hist();
@@ -128,7 +196,7 @@ pub fn aggressive_fill(depth: u64) -> Histogram<u64> {
             fills = fresh.2;
         }
         fills.clear();
-        let t = Instant::now();
+        let t = timer::start();
         book.add_order(
             Order {
                 id,
@@ -140,7 +208,7 @@ pub fn aggressive_fill(depth: u64) -> Histogram<u64> {
             &mut fills,
         );
         if i >= WARMUP {
-            hist.record(t.elapsed().as_nanos() as u64).ok();
+            hist.record(timer::elapsed_ns(t)).ok();
         }
         id += 1;
     }
@@ -148,6 +216,7 @@ pub fn aggressive_fill(depth: u64) -> Histogram<u64> {
 }
 
 pub fn multi_level_sweep(num_levels: u64) -> Histogram<u64> {
+    timer::calibrate();
     let mut fills = Vec::with_capacity(num_levels as usize);
     let mut id = 1u64;
     let mut hist = new_hist();
@@ -169,7 +238,7 @@ pub fn multi_level_sweep(num_levels: u64) -> Histogram<u64> {
             id += 1;
         }
         fills.clear();
-        let t = Instant::now();
+        let t = timer::start();
         book.add_order(
             Order {
                 id,
@@ -181,7 +250,7 @@ pub fn multi_level_sweep(num_levels: u64) -> Histogram<u64> {
             &mut fills,
         );
         if i >= WARMUP {
-            hist.record(t.elapsed().as_nanos() as u64).ok();
+            hist.record(timer::elapsed_ns(t)).ok();
         }
         id += 1;
     }
@@ -190,6 +259,7 @@ pub fn multi_level_sweep(num_levels: u64) -> Histogram<u64> {
 }
 
 pub fn market_order(depth: u64) -> Histogram<u64> {
+    timer::calibrate();
     let (mut book, mut id, mut fills) = fresh_book_asks(depth);
     let refill_at = (depth / 4).max(10) as usize;
     let mut hist = new_hist();
@@ -202,7 +272,7 @@ pub fn market_order(depth: u64) -> Histogram<u64> {
             fills = fresh.2;
         }
         fills.clear();
-        let t = Instant::now();
+        let t = timer::start();
         book.add_order(
             Order {
                 id,
@@ -214,7 +284,7 @@ pub fn market_order(depth: u64) -> Histogram<u64> {
             &mut fills,
         );
         if i >= WARMUP {
-            hist.record(t.elapsed().as_nanos() as u64).ok();
+            hist.record(timer::elapsed_ns(t)).ok();
         }
         id += 1;
     }
@@ -222,6 +292,7 @@ pub fn market_order(depth: u64) -> Histogram<u64> {
 }
 
 pub fn cancel(depth: u64) -> Histogram<u64> {
+    timer::calibrate();
     let (mut book, mut id, _) = fresh_book_both(depth);
     let mut cancel_id = id - depth;
     let mut hist = new_hist();
@@ -233,10 +304,10 @@ pub fn cancel(depth: u64) -> Histogram<u64> {
             id = fresh.1;
             cancel_id = id - depth;
         }
-        let t = Instant::now();
+        let t = timer::start();
         book.cancel(cancel_id);
         if i >= WARMUP {
-            hist.record(t.elapsed().as_nanos() as u64).ok();
+            hist.record(timer::elapsed_ns(t)).ok();
         }
         cancel_id += 1;
     }
@@ -244,6 +315,7 @@ pub fn cancel(depth: u64) -> Histogram<u64> {
 }
 
 pub fn cancel_hot_level(orders_per_level: u64) -> Histogram<u64> {
+    timer::calibrate();
     let mut fills = Vec::with_capacity(4);
     let mut id = 1u64;
     let price = MID + SPREAD;
@@ -278,10 +350,10 @@ pub fn cancel_hot_level(orders_per_level: u64) -> Histogram<u64> {
             book = OrderBook::new();
             cancel_id = seed(&mut book, &mut id);
         }
-        let t = Instant::now();
+        let t = timer::start();
         book.cancel(cancel_id);
         if i >= WARMUP {
-            hist.record(t.elapsed().as_nanos() as u64).ok();
+            hist.record(timer::elapsed_ns(t)).ok();
         }
         cancel_id += 1;
     }
@@ -289,6 +361,7 @@ pub fn cancel_hot_level(orders_per_level: u64) -> Histogram<u64> {
 }
 
 pub fn drain_single_level(orders: u64) -> Histogram<u64> {
+    timer::calibrate();
     let mut fills = Vec::with_capacity(orders as usize);
     let mut id = 1u64;
     let price = MID + SPREAD;
@@ -311,7 +384,7 @@ pub fn drain_single_level(orders: u64) -> Histogram<u64> {
             id += 1;
         }
         fills.clear();
-        let t = Instant::now();
+        let t = timer::start();
         book.add_order(
             Order {
                 id,
@@ -323,7 +396,7 @@ pub fn drain_single_level(orders: u64) -> Histogram<u64> {
             &mut fills,
         );
         if i >= WARMUP {
-            hist.record(t.elapsed().as_nanos() as u64).ok();
+            hist.record(timer::elapsed_ns(t)).ok();
         }
         id += 1;
     }
@@ -332,6 +405,7 @@ pub fn drain_single_level(orders: u64) -> Histogram<u64> {
 }
 
 pub fn mixed_workload(depth: u64) -> Histogram<u64> {
+    timer::calibrate();
     let mut fills = Vec::with_capacity(8);
     let mut id = 1u64;
     let mut book = OrderBook::with_capacity(depth as usize);
@@ -343,7 +417,6 @@ pub fn mixed_workload(depth: u64) -> Histogram<u64> {
     let mut hist = new_hist();
 
     for i in 0..(WARMUP + ITERS) {
-        // Re-seed before timing if book is too thin
         if book.len() < 50 {
             book = OrderBook::with_capacity(depth as usize);
             id = 1;
@@ -353,7 +426,7 @@ pub fn mixed_workload(depth: u64) -> Histogram<u64> {
         }
 
         let roll = id % 20;
-        let t = Instant::now();
+        let t = timer::start();
 
         if roll < 13 {
             if !cancel_ring.is_empty() {
@@ -403,7 +476,7 @@ pub fn mixed_workload(depth: u64) -> Histogram<u64> {
         }
 
         if i >= WARMUP {
-            hist.record(t.elapsed().as_nanos() as u64).ok();
+            hist.record(timer::elapsed_ns(t)).ok();
         }
         id += 1;
     }
@@ -702,56 +775,8 @@ pub fn profile_timer_only() {
     });
 }
 
-// ── Timer-rdtsc (noise floor without clock_gettime) ─────────────
-
-#[cfg(target_arch = "x86_64")]
-fn calibrate_tsc_ghz() -> f64 {
-    let t0 = Instant::now();
-    let c0 = unsafe { core::arch::x86_64::_rdtsc() };
-    std::thread::sleep(std::time::Duration::from_millis(50));
-    let c1 = unsafe { core::arch::x86_64::_rdtsc() };
-    let elapsed_ns = t0.elapsed().as_nanos() as f64;
-    (c1 - c0) as f64 / elapsed_ns
-}
-
-#[cfg(target_arch = "x86_64")]
-fn timed_loop_rdtsc(
-    warmup: u64,
-    iters: u64,
-    cycles_per_ns: f64,
-    mut body: impl FnMut(),
-) -> Histogram<u64> {
-    let mut hist = new_hist();
-    for i in 0..(warmup + iters) {
-        unsafe { core::arch::x86_64::_mm_lfence() };
-        let c0 = unsafe { core::arch::x86_64::_rdtsc() };
-        body();
-        unsafe { core::arch::x86_64::_mm_lfence() };
-        let c1 = unsafe { core::arch::x86_64::_rdtsc() };
-        if i >= warmup {
-            let ns = ((c1 - c0) as f64 / cycles_per_ns) as u64;
-            hist.record(ns).ok();
-        }
-    }
-    hist
-}
-
-#[cfg(target_arch = "x86_64")]
+// timer_rdtsc is now identical to timer_only since all timing uses the
+// unified timer module (rdtsc on x86_64, Instant fallback).
 pub fn timer_rdtsc() -> Histogram<u64> {
-    let cpns = calibrate_tsc_ghz();
-    eprintln!(
-        "  TSC calibration: {:.3} cycles/ns ({:.0} MHz)",
-        cpns,
-        cpns * 1000.0
-    );
-    let mut x = 0u64;
-    timed_loop_rdtsc(WARMUP, ITERS, cpns, || {
-        std::hint::black_box(&mut x);
-    })
-}
-
-#[cfg(not(target_arch = "x86_64"))]
-pub fn timer_rdtsc() -> Histogram<u64> {
-    eprintln!("  rdtsc not available on this architecture, falling back to Instant");
     timer_only()
 }
