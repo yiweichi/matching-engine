@@ -1,0 +1,14 @@
+=== Matching Engine Latency Benchmark ===
+    git: 59cbe61 (dirty)
+    warmup=2000  iters=200000  sweep_iters=50000
+
+── Timer RDTSC (noise floor, no clock_gettime) (ns) ──────────────────────────────────────
+                                p50        p99      p99.9     p99.99        min        max
+  ────────────────────────────────────────────────────────────────────────────────────────
+  noop                            0         42        125        208         41      9,799
+
+── Summary ───────────────────────────────────────────
+  Total ops:          200,000
+  Throughput:         22,412,205 ops/sec
+  Latency (all ops):  p50=0 ns  p99=42 ns  p99.9=125 ns  max=9,799 ns
+  Benchmark time:     8.92ms

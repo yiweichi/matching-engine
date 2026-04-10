@@ -62,6 +62,9 @@ fn run_profile(args: &ProfileArgs) {
             Scenario::TimerOnly => {
                 scenarios::profile_timer_only();
             }
+            Scenario::TimerRdtsc => {
+                scenarios::profile_timer_only();
+            }
         }
     }
     eprintln!(
@@ -196,6 +199,10 @@ fn run_bench(r: &mut Reporter, args: &BenchArgs) {
         Some(Scenario::TimerOnly) => {
             r.section("Timer Only (noise floor)");
             r.row("noop", &scenarios::timer_only());
+        }
+        Some(Scenario::TimerRdtsc) => {
+            r.section("Timer RDTSC (noise floor, no clock_gettime)");
+            r.row("noop", &scenarios::timer_rdtsc());
         }
     }
 }
