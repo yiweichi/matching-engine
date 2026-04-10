@@ -723,8 +723,10 @@ fn timed_loop_rdtsc(
 ) -> Histogram<u64> {
     let mut hist = new_hist();
     for i in 0..(warmup + iters) {
+        unsafe { core::arch::x86_64::_mm_lfence() };
         let c0 = unsafe { core::arch::x86_64::_rdtsc() };
         body();
+        unsafe { core::arch::x86_64::_mm_lfence() };
         let c1 = unsafe { core::arch::x86_64::_rdtsc() };
         if i >= warmup {
             let ns = ((c1 - c0) as f64 / cycles_per_ns) as u64;
@@ -750,53 +752,6 @@ pub fn timer_rdtsc() -> Histogram<u64> {
 
 #[cfg(not(target_arch = "x86_64"))]
 pub fn timer_rdtsc() -> Histogram<u64> {
-    eprintln!("  rdtsc not available on this architecture, falling back to Instant");
-    timer_only()
-}
-
-#[cfg(target_arch = "x86_64")]
-fn timed_loop_rdtsc_padded(
-    warmup: u64,
-    iters: u64,
-    cycles_per_ns: f64,
-    pad_ns: u64,
-    mut body: impl FnMut(),
-) -> Histogram<u64> {
-    let pad_cycles = (pad_ns as f64 * cycles_per_ns) as u64;
-    let mut hist = new_hist();
-    for i in 0..(warmup + iters) {
-        let c0 = unsafe { core::arch::x86_64::_rdtsc() };
-        body();
-        let c1 = unsafe { core::arch::x86_64::_rdtsc() };
-        if i >= warmup {
-            let ns = ((c1 - c0) as f64 / cycles_per_ns) as u64;
-            hist.record(ns).ok();
-        }
-        while unsafe { core::arch::x86_64::_rdtsc() }.wrapping_sub(c0) < pad_cycles {
-            core::hint::spin_loop();
-        }
-    }
-    hist
-}
-
-#[cfg(target_arch = "x86_64")]
-pub fn timer_rdtsc_padded() -> Histogram<u64> {
-    let cpns = calibrate_tsc_ghz();
-    let pad_ns: u64 = 50;
-    eprintln!(
-        "  TSC calibration: {:.3} cycles/ns ({:.0} MHz), pad={}ns",
-        cpns,
-        cpns * 1000.0,
-        pad_ns,
-    );
-    let mut x = 0u64;
-    timed_loop_rdtsc_padded(WARMUP, ITERS, cpns, pad_ns, || {
-        std::hint::black_box(&mut x);
-    })
-}
-
-#[cfg(not(target_arch = "x86_64"))]
-pub fn timer_rdtsc_padded() -> Histogram<u64> {
     eprintln!("  rdtsc not available on this architecture, falling back to Instant");
     timer_only()
 }

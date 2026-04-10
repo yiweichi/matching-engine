@@ -65,9 +65,6 @@ fn run_profile(args: &ProfileArgs) {
             Scenario::TimerRdtsc => {
                 scenarios::profile_timer_only();
             }
-            Scenario::TimerRdtscPadded => {
-                scenarios::profile_timer_only();
-            }
         }
     }
     eprintln!(
@@ -206,10 +203,6 @@ fn run_bench(r: &mut Reporter, args: &BenchArgs) {
         Some(Scenario::TimerRdtsc) => {
             r.section("Timer RDTSC (noise floor, no clock_gettime)");
             r.row("noop", &scenarios::timer_rdtsc());
-        }
-        Some(Scenario::TimerRdtscPadded) => {
-            r.section("Timer RDTSC Padded (rdtsc timing, Instant-sized window)");
-            r.row("padded", &scenarios::timer_rdtsc_padded());
         }
     }
 }
