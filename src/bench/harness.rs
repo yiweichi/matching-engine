@@ -4,6 +4,45 @@ use std::time::SystemTime;
 
 use hdrhistogram::Histogram;
 
+/// Run a git command with CPU affinity reset so the child process doesn't
+/// inherit the benchmark core's `taskset` pinning and pollute its caches / tick.
+fn git_output(args: &[&str]) -> Option<String> {
+    let mut cmd = Command::new("git");
+    cmd.args(args);
+
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::process::CommandExt;
+        unsafe {
+            cmd.pre_exec(|| {
+                let size = std::mem::size_of::<libc::cpu_set_t>();
+                let mut inherited: libc::cpu_set_t = std::mem::zeroed();
+                libc::sched_getaffinity(0, size, &mut inherited);
+
+                // Complement: every CPU *except* the benchmark CPU.
+                // This forces the kernel to migrate the child off immediately.
+                let mut mask: libc::cpu_set_t = std::mem::zeroed();
+                let mut count = 0u32;
+                for cpu in 0..libc::CPU_SETSIZE as usize {
+                    if !libc::CPU_ISSET(cpu, &inherited) {
+                        libc::CPU_SET(cpu, &mut mask);
+                        count += 1;
+                    }
+                }
+                if count > 0 {
+                    libc::sched_setaffinity(0, size, &mask);
+                }
+                Ok(())
+            });
+        }
+    }
+
+    cmd.output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+}
+
 pub const MID: u64 = 10_000;
 pub const SPREAD: u64 = 50;
 pub const WARMUP: u64 = 2_000;
@@ -42,22 +81,14 @@ impl Reporter {
     }
 
     pub fn git_version(&mut self) {
-        let hash = Command::new("git")
-            .args(["rev-parse", "--short", "HEAD"])
-            .output()
-            .ok()
-            .and_then(|o| String::from_utf8(o.stdout).ok())
-            .unwrap_or_default();
-        let dirty = Command::new("git")
-            .args(["status", "--porcelain"])
-            .output()
-            .ok()
-            .map(|o| !o.stdout.is_empty())
+        let hash = git_output(&["rev-parse", "--short", "HEAD"]);
+        let dirty = git_output(&["status", "--porcelain"])
+            .map(|s| !s.is_empty())
             .unwrap_or(false);
 
         let version = format!(
             "    git: {}{}",
-            hash.trim(),
+            hash.as_deref().unwrap_or("unknown"),
             if dirty { " (dirty)" } else { "" }
         );
         self.header(&version);
