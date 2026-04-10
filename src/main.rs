@@ -244,7 +244,6 @@ fn main() {
             let mut r = Reporter::new();
 
             r.header("=== Matching Engine Latency Benchmark ===");
-            r.git_version();
             r.header(&format!(
                 "    warmup={WARMUP}  iters={ITERS}  sweep_iters={SWEEP_ITERS}"
             ));
