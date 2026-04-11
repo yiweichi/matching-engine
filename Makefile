@@ -6,7 +6,7 @@ RUN        = $(if $(CPU),taskset -c $(CPU) ,)$(BIN)
 
 export RUSTFLAGS
 
-.PHONY: build build-prof test clippy fmt pr bench bench-scenario profile-scenario bench-pin clean
+.PHONY: build build-prof test clippy fmt pr bench bench-scenario profile-scenario serve sim clean
 
 build:
 	$(CARGO) build --release
@@ -35,6 +35,13 @@ bench-scenario: build
 profile-scenario: build
 	@test -n "$(SCENARIO)" || (echo "usage: make profile-scenario SCENARIO=<name> [DEPTH=n] [LEVELS=n] [ORDERS=n] [REPEAT=n] [CPU=n]"; exit 1)
 	$(RUN) profile --scenario $(SCENARIO) $(if $(DEPTH),--depth $(DEPTH),) $(if $(LEVELS),--levels $(LEVELS),) $(if $(ORDERS),--orders $(ORDERS),) $(if $(REPEAT),--repeat $(REPEAT),)
+
+serve: build
+	@echo "Starting exchange server (Ctrl-C to stop)..."
+	$(RUN) serve $(if $(MD_PORT),--md-port $(MD_PORT),) $(if $(ORDER_PORT),--order-port $(ORDER_PORT),) $(if $(TICK_RATE),--tick-rate $(TICK_RATE),) $(if $(TICKS),--ticks $(TICKS),) $(if $(SEED),--seed $(SEED),)
+
+sim: build
+	$(RUN) sim $(if $(TICKS),--ticks $(TICKS),) $(if $(SEED),--seed $(SEED),) $(if $(MAX_POS),--max-position $(MAX_POS),)
 
 %:
 	@:

@@ -1,0 +1,39 @@
+=== Trading Simulation Report ===
+
+Configuration:
+  Ticks:              1,000,000
+  Seed:                      42
+  Max position:               5
+
+  Trader A (fast): 1 md + 1 order = 2 tick round-trip
+  Trader B (slow): 10 md + 10 order = 20 tick round-trip
+
+--- Market Summary ---
+  Price range:     6,264 - 10,005
+  Final mid:       6,281
+
+--- Trader A (fast) ---
+  Trades:          57762 (28881 buys, 28881 sells)
+  Avg buy price:   8132.6
+  Avg sell price:  8130.5
+  Final position:  +0
+  Cash:            -60605
+  Unrealized PnL:  +0
+  Total PnL:       -60605
+
+--- Trader B (slow) ---
+  Trades:          57761 (28880 buys, 28881 sells)
+  Avg buy price:   8132.6
+  Avg sell price:  8130.4
+  Final position:  -1
+  Cash:            -56190
+  Unrealized PnL:  -6281
+  Total PnL:       -62471
+
+--- Comparison ---
+  PnL advantage (A - B): +1866
+  Latency ratio:         10.0x
+  PnL ratio (A/B):       0.97x
+  Avg buy slippage:      B pays 0.0 ticks more per unit
+  Avg sell slippage:     B earns 0.1 ticks less per unit
+
