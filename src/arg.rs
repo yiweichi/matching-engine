@@ -12,6 +12,7 @@ pub enum Scenario {
     MixedWorkload,
     TimerOnly,
     TimerRdtsc,
+    GapDetector,
 }
 
 #[derive(Debug, Parser)]

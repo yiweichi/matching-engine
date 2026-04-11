@@ -1,5 +1,4 @@
 use std::fs;
-use std::process::Command;
 use std::time::SystemTime;
 
 use hdrhistogram::Histogram;
@@ -39,28 +38,6 @@ impl Reporter {
             histograms: Vec::new(),
             current_section: String::new(),
         }
-    }
-
-    pub fn git_version(&mut self) {
-        let hash = Command::new("git")
-            .args(["rev-parse", "--short", "HEAD"])
-            .output()
-            .ok()
-            .and_then(|o| String::from_utf8(o.stdout).ok())
-            .unwrap_or_default();
-        let dirty = Command::new("git")
-            .args(["status", "--porcelain"])
-            .output()
-            .ok()
-            .map(|o| !o.stdout.is_empty())
-            .unwrap_or(false);
-
-        let version = format!(
-            "    git: {}{}",
-            hash.trim(),
-            if dirty { " (dirty)" } else { "" }
-        );
-        self.header(&version);
     }
 
     pub fn header(&mut self, text: &str) {
