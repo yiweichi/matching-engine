@@ -1,6 +1,6 @@
 use super::exchange::L1;
 use super::strategy::{Action, Strategy};
-use matching_engine::{Fill, Price, Qty, Side};
+use matching_engine::{Fill, Qty, Side};
 use std::collections::VecDeque;
 
 #[allow(dead_code)]
@@ -21,6 +21,7 @@ pub struct Trader {
     pub total_sell_qty: Qty,
     pub total_buy_cost: i64,
     pub total_sell_proceeds: i64,
+    pub missed_orders: u64,
     strategy: Strategy,
     md_queue: VecDeque<(u64, L1)>,
     order_queue: VecDeque<(u64, Action)>,
@@ -29,6 +30,7 @@ pub struct Trader {
 impl Trader {
     pub fn new(config: TraderConfig) -> Self {
         Self {
+            strategy: Strategy::new(config.max_position),
             config,
             position: 0,
             cash: 0,
@@ -38,7 +40,7 @@ impl Trader {
             total_sell_qty: 0,
             total_buy_cost: 0,
             total_sell_proceeds: 0,
-            strategy: Strategy::new(),
+            missed_orders: 0,
             md_queue: VecDeque::with_capacity(256),
             order_queue: VecDeque::with_capacity(64),
         }
@@ -61,7 +63,6 @@ impl Trader {
         }
 
         if let Some(l1) = latest {
-            // Only generate a new order if none are in flight
             if self.order_queue.is_empty() {
                 if let Some(action) = self.strategy.decide(&l1, self.position, current_tick) {
                     let delivery = current_tick + self.config.order_latency;
@@ -83,6 +84,10 @@ impl Trader {
             }
         }
         orders
+    }
+
+    pub fn record_miss(&mut self) {
+        self.missed_orders += 1;
     }
 
     pub fn apply_fills(&mut self, fills: &[Fill], side: Side) {
@@ -108,8 +113,8 @@ impl Trader {
         }
     }
 
-    pub fn total_pnl(&self, mark_price: Price) -> i64 {
-        self.cash + self.position * mark_price as i64
+    pub fn total_pnl(&self) -> i64 {
+        self.cash
     }
 
     pub fn total_trades(&self) -> u64 {

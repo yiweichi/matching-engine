@@ -5,6 +5,7 @@
 pub const MD_MSG_QUOTE: u8 = 1;
 pub const MD_MSG_DEPTH: u8 = 2;
 pub const MD_MSG_TRADE: u8 = 3;
+pub const MD_MSG_REFERENCE: u8 = 4;
 
 pub const ORDER_MSG_NEW: u8 = 1;
 pub const ORDER_MSG_CANCEL: u8 = 2;
@@ -14,6 +15,7 @@ pub const SIDE_SELL: u8 = 1;
 
 pub const ORDER_TYPE_LIMIT: u8 = 0;
 pub const ORDER_TYPE_MARKET: u8 = 1;
+pub const ORDER_TYPE_IOC_LIMIT: u8 = 2;
 
 pub const EXEC_NEW_ACK: u8 = 0;
 pub const EXEC_FILL: u8 = 1;
@@ -46,6 +48,14 @@ pub struct WireMdQuote {
     pub ask_price: f64,
     pub bid_size: u32,
     pub ask_size: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct WireMdReference {
+    pub header: WireMdHeader,
+    pub reference_mid: f64,
+    pub _pad: [u8; 8],
 }
 
 #[repr(C)]
@@ -112,6 +122,7 @@ pub struct WireExecReport {
 const _: () = {
     assert!(std::mem::size_of::<WireMdHeader>() == 24);
     assert!(std::mem::size_of::<WireMdQuote>() == 48);
+    assert!(std::mem::size_of::<WireMdReference>() == 40);
     assert!(std::mem::size_of::<WireMdDepthLevel>() == 16);
     assert!(std::mem::size_of::<WireMdDepth>() == 352);
     assert!(std::mem::size_of::<WireMdTrade>() == 40);

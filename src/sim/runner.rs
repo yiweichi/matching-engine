@@ -1,6 +1,8 @@
 use super::exchange::SimExchange;
 use super::report::SimResult;
+use super::strategy::Action;
 use super::trader::{Trader, TraderConfig};
+use matching_engine::{Qty, Side};
 
 pub struct SimConfig {
     pub ticks: u64,
@@ -16,10 +18,10 @@ impl Default for SimConfig {
     fn default() -> Self {
         Self {
             ticks: 1_000_000,
-            fast_md_latency: 1,
-            fast_order_latency: 1,
-            slow_md_latency: 10,
-            slow_order_latency: 10,
+            fast_md_latency: 0,
+            fast_order_latency: 0,
+            slow_md_latency: 100,
+            slow_order_latency: 100,
             max_position: 1,
             seed: 42,
         }
@@ -46,36 +48,28 @@ pub fn run(cfg: &SimConfig) -> SimResult {
         let l1 = exchange.step();
         let tick = exchange.tick();
 
-        // Queue market data with respective latencies
         fast.queue_md(tick + cfg.fast_md_latency, l1);
         slow.queue_md(tick + cfg.slow_md_latency, l1);
 
-        // Process arrived market data and run strategies
         fast.process_md(tick);
         slow.process_md(tick);
 
-        // Execute arrived orders (fast trader goes first — realistic priority)
-        for action in fast.drain_arrived_orders(tick) {
-            let fills = exchange.submit_market(action.side(), action.qty());
-            if !fills.is_empty() {
-                fast.apply_fills(&fills, action.side());
-            }
-        }
-        for action in slow.drain_arrived_orders(tick) {
-            let fills = exchange.submit_market(action.side(), action.qty());
-            if !fills.is_empty() {
-                slow.apply_fills(&fills, action.side());
-            }
+        let fast_orders = fast.drain_arrived_orders(tick);
+        let slow_orders = slow.drain_arrived_orders(tick);
+
+        if tick % 2 == 0 {
+            execute_orders(&mut exchange, &mut fast, fast_orders);
+            execute_orders(&mut exchange, &mut slow, slow_orders);
+        } else {
+            execute_orders(&mut exchange, &mut slow, slow_orders);
+            execute_orders(&mut exchange, &mut fast, fast_orders);
         }
     }
 
-    // Final snapshot for mark-to-market
-    let final_l1 = exchange.step();
-    let mark_price = if final_l1.valid() {
-        final_l1.mid() as u64
-    } else {
-        10_000
-    };
+    liquidate_position(&mut exchange, &mut fast);
+    liquidate_position(&mut exchange, &mut slow);
+
+    let mark_price = exchange.reference_mid();
 
     SimResult {
         ticks: cfg.ticks,
@@ -93,17 +87,43 @@ pub fn run(cfg: &SimConfig) -> SimResult {
         fast_buys: fast.num_buys,
         fast_sells: fast.num_sells,
         fast_position: fast.position,
-        fast_pnl: fast.total_pnl(mark_price),
+        fast_pnl: fast.total_pnl(),
         fast_cash: fast.cash,
         fast_avg_buy: fast.avg_buy_price(),
         fast_avg_sell: fast.avg_sell_price(),
+        fast_missed_orders: fast.missed_orders,
         slow_trades: slow.total_trades(),
         slow_buys: slow.num_buys,
         slow_sells: slow.num_sells,
         slow_position: slow.position,
-        slow_pnl: slow.total_pnl(mark_price),
+        slow_pnl: slow.total_pnl(),
         slow_cash: slow.cash,
         slow_avg_buy: slow.avg_buy_price(),
         slow_avg_sell: slow.avg_sell_price(),
+        slow_missed_orders: slow.missed_orders,
+    }
+}
+
+fn execute_orders(exchange: &mut SimExchange, trader: &mut Trader, orders: Vec<Action>) {
+    for action in orders {
+        let fills = exchange.submit_ioc_limit(action.side(), action.limit_price(), action.qty());
+        if fills.is_empty() {
+            trader.record_miss();
+        } else {
+            trader.apply_fills(&fills, action.side());
+        }
+    }
+}
+
+fn liquidate_position(exchange: &mut SimExchange, trader: &mut Trader) {
+    let position = trader.position;
+    if position > 0 {
+        let qty = position as Qty;
+        let fills = exchange.submit_market(Side::Sell, qty);
+        trader.apply_fills(&fills, Side::Sell);
+    } else if position < 0 {
+        let qty = (-position) as Qty;
+        let fills = exchange.submit_market(Side::Buy, qty);
+        trader.apply_fills(&fills, Side::Buy);
     }
 }

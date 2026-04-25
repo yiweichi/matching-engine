@@ -1,0 +1,37 @@
+=== Stale Quote Arbitrage Simulation Report ===
+
+Configuration:
+  Ticks:              1,000,000
+  Seed:                      42
+  Max position:               1
+  Ref jumps:              1,175
+
+  Trader A (fast): 0 md + 0 order = 0 tick round-trip
+  Trader B (slow): 100 md + 100 order = 200 tick round-trip
+
+--- Market Summary ---
+  Reference range: 9,973 - 10,021
+  Final reference: 10,008
+
+--- Trader A (fast) ---
+  Fills:           2350 (1175 buys, 1175 sells)
+  Missed IOC:      0
+  Avg buy price:   9995.2
+  Avg sell price:  9997.6
+  Final position:  +0
+  Cash:            +2874
+  Total PnL:       +2874
+
+--- Trader B (slow) ---
+  Fills:           0 (0 buys, 0 sells)
+  Missed IOC:      1175
+  Final position:  +0
+  Cash:            +0
+  Total PnL:       +0
+
+--- Comparison ---
+  PnL advantage (A - B): +2874
+  Latency ratio:         infx
+  Fill advantage:        +2350 fills
+  Miss difference:       -1175 missed IOC orders
+

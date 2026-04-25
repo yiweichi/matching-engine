@@ -1,110 +1,75 @@
 use super::exchange::L1;
-use matching_engine::{Qty, Side};
+use matching_engine::{Price, Qty, Side};
 
 #[derive(Debug, Clone, Copy)]
 pub enum Action {
-    Buy(Qty),
-    Sell(Qty),
+    Buy { qty: Qty, limit_price: Price },
+    Sell { qty: Qty, limit_price: Price },
 }
 
 impl Action {
     pub fn side(&self) -> Side {
         match self {
-            Action::Buy(_) => Side::Buy,
-            Action::Sell(_) => Side::Sell,
+            Action::Buy { .. } => Side::Buy,
+            Action::Sell { .. } => Side::Sell,
         }
     }
 
     pub fn qty(&self) -> Qty {
         match self {
-            Action::Buy(q) | Action::Sell(q) => *q,
+            Action::Buy { qty, .. } | Action::Sell { qty, .. } => *qty,
+        }
+    }
+
+    pub fn limit_price(&self) -> Price {
+        match self {
+            Action::Buy { limit_price, .. } | Action::Sell { limit_price, .. } => *limit_price,
         }
     }
 }
 
-/// Event-capture strategy with a three-state lifecycle:
-///   FLAT → (entry signal) → HOLDING → (exit signal) → COOLDOWN → FLAT
+/// Stale-quote arbitrage strategy.
 ///
-/// Enters when L1 imbalance exceeds threshold (flow event detected).
-/// Holds at least `min_hold` ticks, then exits when imbalance fades.
-/// Observes a post-exit cooldown to avoid re-entering the same event.
+/// The strategy treats `reference_mid` as the leading fair value and the target
+/// book's best bid/ask as executable stale quotes. It sends marketable IOC-style
+/// limit orders only when the expected edge exceeds `edge_threshold`.
 pub struct Strategy {
-    entry_threshold: f64,
-    exit_threshold: f64,
-    min_hold: u64,
-    max_hold: u64,
-    post_exit_cooldown: u64,
-    entry_tick: u64,
-    exit_tick: u64,
-    has_exited: bool,
+    edge_threshold: Price,
+    order_qty: Qty,
+    max_position: i64,
 }
 
 impl Strategy {
-    pub fn new() -> Self {
+    pub fn new(max_position: i64) -> Self {
         Self {
-            entry_threshold: 0.35,
-            exit_threshold: 0.05,
-            min_hold: 25,
-            max_hold: 160,
-            post_exit_cooldown: 120,
-            entry_tick: 0,
-            exit_tick: 0,
-            has_exited: false,
+            edge_threshold: 2,
+            order_qty: 1,
+            max_position,
         }
     }
 
-    pub fn decide(&mut self, l1: &L1, position: i64, current_tick: u64) -> Option<Action> {
+    pub fn decide(&mut self, l1: &L1, position: i64, _current_tick: u64) -> Option<Action> {
         if !l1.valid() {
             return None;
         }
 
-        let imbalance = l1.imbalance();
+        let reference = l1.reference_mid;
 
-        // ── FLAT: look for entry ────────────────────────────────────
-        if position == 0 {
-            if self.has_exited && current_tick < self.exit_tick + self.post_exit_cooldown {
-                return None;
-            }
-            if imbalance > self.entry_threshold {
-                self.entry_tick = current_tick;
-                self.has_exited = false;
-                return Some(Action::Buy(1));
-            }
-            if imbalance < -self.entry_threshold {
-                self.entry_tick = current_tick;
-                self.has_exited = false;
-                return Some(Action::Sell(1));
-            }
-            return None;
+        if reference >= l1.ask.saturating_add(self.edge_threshold) && position < self.max_position {
+            return Some(Action::Buy {
+                qty: self.order_qty,
+                limit_price: l1.ask,
+            });
         }
 
-        // ── HOLDING: look for exit ──────────────────────────────────
-        let held = current_tick.saturating_sub(self.entry_tick);
-
-        if held >= self.max_hold {
-            self.exit_tick = current_tick;
-            self.has_exited = true;
-            return Some(flatten(position));
-        }
-
-        if held >= self.min_hold {
-            let should_exit = (position > 0 && imbalance < self.exit_threshold)
-                || (position < 0 && imbalance > -self.exit_threshold);
-            if should_exit {
-                self.exit_tick = current_tick;
-                self.has_exited = true;
-                return Some(flatten(position));
-            }
+        if l1.bid >= reference.saturating_add(self.edge_threshold) && position > -self.max_position
+        {
+            return Some(Action::Sell {
+                qty: self.order_qty,
+                limit_price: l1.bid,
+            });
         }
 
         None
-    }
-}
-
-fn flatten(position: i64) -> Action {
-    if position > 0 {
-        Action::Sell(position as Qty)
-    } else {
-        Action::Buy((-position) as Qty)
     }
 }

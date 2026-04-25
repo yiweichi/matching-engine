@@ -96,28 +96,28 @@ pub struct SimArgs {
 
     #[arg(
         long,
-        default_value_t = 1,
+        default_value_t = 0,
         help = "Fast trader: market data latency in ticks"
     )]
     pub fast_md_latency: u64,
 
     #[arg(
         long,
-        default_value_t = 1,
+        default_value_t = 0,
         help = "Fast trader: order submission latency in ticks"
     )]
     pub fast_order_latency: u64,
 
     #[arg(
         long,
-        default_value_t = 10,
+        default_value_t = 100,
         help = "Slow trader: market data latency in ticks"
     )]
     pub slow_md_latency: u64,
 
     #[arg(
         long,
-        default_value_t = 10,
+        default_value_t = 100,
         help = "Slow trader: order submission latency in ticks"
     )]
     pub slow_order_latency: u64,
@@ -131,7 +131,11 @@ pub struct SimArgs {
 
 #[derive(Debug, Args)]
 pub struct ServeArgs {
-    #[arg(long, default_value_t = 12345, help = "UDP port for market data broadcast")]
+    #[arg(
+        long,
+        default_value_t = 12345,
+        help = "UDP port for market data broadcast"
+    )]
     pub md_port: u16,
 
     #[arg(long, default_value_t = 12346, help = "TCP port for order gateway")]
@@ -140,7 +144,11 @@ pub struct ServeArgs {
     #[arg(long, default_value_t = 10_000, help = "Exchange ticks per second")]
     pub tick_rate: u64,
 
-    #[arg(long, default_value_t = 10_000_000, help = "Total ticks to run (0 = unlimited)")]
+    #[arg(
+        long,
+        default_value_t = 10_000_000,
+        help = "Total ticks to run (0 = unlimited)"
+    )]
     pub ticks: u64,
 
     #[arg(long, default_value_t = 42, help = "Random seed")]

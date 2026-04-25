@@ -22,6 +22,7 @@ pub struct SimResult {
     pub fast_cash: i64,
     pub fast_avg_buy: f64,
     pub fast_avg_sell: f64,
+    pub fast_missed_orders: u64,
 
     pub slow_trades: u64,
     pub slow_buys: u64,
@@ -31,19 +32,20 @@ pub struct SimResult {
     pub slow_cash: i64,
     pub slow_avg_buy: f64,
     pub slow_avg_sell: f64,
+    pub slow_missed_orders: u64,
 }
 
 impl SimResult {
     pub fn format_report(&self) -> String {
         let mut s = String::with_capacity(2048);
 
-        let _ = writeln!(s, "=== Trading Simulation Report ===");
+        let _ = writeln!(s, "=== Stale Quote Arbitrage Simulation Report ===");
         let _ = writeln!(s);
         let _ = writeln!(s, "Configuration:");
         let _ = writeln!(s, "  Ticks:           {:>12}", fmt_num(self.ticks));
         let _ = writeln!(s, "  Seed:            {:>12}", self.seed);
         let _ = writeln!(s, "  Max position:    {:>12}", self.max_position);
-        let _ = writeln!(s, "  Flow events:     {:>12}", fmt_num(self.num_events));
+        let _ = writeln!(s, "  Ref jumps:       {:>12}", fmt_num(self.num_events));
         let _ = writeln!(s);
 
         let fast_rt = self.fast_md_latency + self.fast_order_latency;
@@ -63,11 +65,11 @@ impl SimResult {
         let _ = writeln!(s, "--- Market Summary ---");
         let _ = writeln!(
             s,
-            "  Price range:     {} - {}",
+            "  Reference range: {} - {}",
             fmt_num(self.price_low),
             fmt_num(self.price_high)
         );
-        let _ = writeln!(s, "  Final mid:       {}", fmt_num(self.mark_price));
+        let _ = writeln!(s, "  Final reference: {}", fmt_num(self.mark_price));
         let _ = writeln!(s);
 
         self.format_trader(
@@ -81,6 +83,7 @@ impl SimResult {
             self.fast_position,
             self.fast_cash,
             self.fast_pnl,
+            self.fast_missed_orders,
         );
         let _ = writeln!(s);
         self.format_trader(
@@ -94,6 +97,7 @@ impl SimResult {
             self.slow_position,
             self.slow_cash,
             self.slow_pnl,
+            self.slow_missed_orders,
         );
         let _ = writeln!(s);
 
@@ -107,11 +111,16 @@ impl SimResult {
             f64::INFINITY
         };
         let _ = writeln!(s, "  Latency ratio:         {:.1}x", latency_ratio);
-
-        if self.slow_pnl != 0 {
-            let pnl_ratio = self.fast_pnl as f64 / self.slow_pnl as f64;
-            let _ = writeln!(s, "  PnL ratio (A/B):       {:.2}x", pnl_ratio);
-        }
+        let _ = writeln!(
+            s,
+            "  Fill advantage:        {:+} fills",
+            self.fast_trades as i64 - self.slow_trades as i64
+        );
+        let _ = writeln!(
+            s,
+            "  Miss difference:       {:+} missed IOC orders",
+            self.fast_missed_orders as i64 - self.slow_missed_orders as i64
+        );
 
         if self.fast_avg_buy > 0.0 && self.slow_avg_buy > 0.0 {
             let buy_slip = self.slow_avg_buy - self.fast_avg_buy;
@@ -147,9 +156,15 @@ impl SimResult {
         position: i64,
         cash: i64,
         pnl: i64,
+        missed_orders: u64,
     ) {
         let _ = writeln!(s, "--- {} ---", name);
-        let _ = writeln!(s, "  Trades:          {} ({} buys, {} sells)", trades, buys, sells);
+        let _ = writeln!(
+            s,
+            "  Fills:           {} ({} buys, {} sells)",
+            trades, buys, sells
+        );
+        let _ = writeln!(s, "  Missed IOC:      {}", missed_orders);
         if buys > 0 {
             let _ = writeln!(s, "  Avg buy price:   {:.1}", avg_buy);
         }
@@ -158,8 +173,6 @@ impl SimResult {
         }
         let _ = writeln!(s, "  Final position:  {:+}", position);
         let _ = writeln!(s, "  Cash:            {:+}", cash);
-        let unrealized = pnl - cash;
-        let _ = writeln!(s, "  Unrealized PnL:  {:+}", unrealized);
         let _ = writeln!(s, "  Total PnL:       {:+}", pnl);
     }
 
