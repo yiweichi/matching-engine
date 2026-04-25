@@ -138,17 +138,20 @@ pub struct ServeArgs {
     )]
     pub md_port: u16,
 
+    #[arg(
+        long,
+        default_value = "239.1.1.1",
+        help = "IPv4 multicast group for market data broadcast"
+    )]
+    pub md_group: String,
+
     #[arg(long, default_value_t = 12346, help = "TCP port for order gateway")]
     pub order_port: u16,
 
     #[arg(long, default_value_t = 10_000, help = "Exchange ticks per second")]
     pub tick_rate: u64,
 
-    #[arg(
-        long,
-        default_value_t = 10_000_000,
-        help = "Total ticks to run (0 = unlimited)"
-    )]
+    #[arg(long, default_value_t = 0, help = "Total ticks to run (0 = unlimited)")]
     pub ticks: u64,
 
     #[arg(long, default_value_t = 42, help = "Random seed")]

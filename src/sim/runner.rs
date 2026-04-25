@@ -57,7 +57,7 @@ pub fn run(cfg: &SimConfig) -> SimResult {
         let fast_orders = fast.drain_arrived_orders(tick);
         let slow_orders = slow.drain_arrived_orders(tick);
 
-        if tick % 2 == 0 {
+        if tick.is_multiple_of(2) {
             execute_orders(&mut exchange, &mut fast, fast_orders);
             execute_orders(&mut exchange, &mut slow, slow_orders);
         } else {
