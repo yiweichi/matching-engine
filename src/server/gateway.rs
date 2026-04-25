@@ -4,6 +4,8 @@ use std::net::{SocketAddr, TcpListener, TcpStream, UdpSocket};
 use std::time::{Duration, Instant};
 
 use matching_engine::{OrderType, Qty, Side};
+use rand::rngs::SmallRng;
+use rand::{Rng, SeedableRng};
 
 use super::wire;
 use crate::arg::ServeArgs;
@@ -60,8 +62,8 @@ impl Client {
 #[derive(Clone, Copy)]
 struct PendingOrder {
     recv_ns: u64,
+    tie_breaker: u64,
     client_idx: usize,
-    seq: u64,
     msg: wire::WireOrderMsg,
 }
 
@@ -82,7 +84,7 @@ pub fn run_server(args: &ServeArgs) {
     let mut clients: Vec<Client> = Vec::new();
     let mut next_client_id = 1u64;
     let mut seq: u32 = 0;
-    let mut pending_seq = 0u64;
+    let mut tie_rng = SmallRng::seed_from_u64(args.seed ^ 0x9e37_79b9_7f4a_7c15);
 
     let tick_ns = 1_000_000_000u64 / args.tick_rate;
     let tick_interval = Duration::from_nanos(tick_ns);
@@ -143,8 +145,8 @@ pub fn run_server(args: &ServeArgs) {
         accept_clients(&tcp_listener, &mut clients, &mut next_client_id);
 
         let mut pending = Vec::new();
-        collect_pending_orders(&mut clients, &mut pending, &mut pending_seq);
-        pending.sort_by_key(|order| (order.recv_ns, order.seq));
+        collect_pending_orders(&mut clients, &mut pending, &mut tie_rng);
+        pending.sort_by_key(|order| (order.recv_ns, order.tie_breaker));
 
         for order in pending {
             process_order_msg(&mut exchange, &order, &mut clients);
@@ -192,7 +194,11 @@ fn accept_clients(listener: &TcpListener, clients: &mut Vec<Client>, next_client
     }
 }
 
-fn collect_pending_orders(clients: &mut [Client], pending: &mut Vec<PendingOrder>, seq: &mut u64) {
+fn collect_pending_orders(
+    clients: &mut [Client],
+    pending: &mut Vec<PendingOrder>,
+    tie_rng: &mut SmallRng,
+) {
     for (client_idx, client) in clients.iter_mut().enumerate() {
         let mut tmp = [0u8; 4096];
         loop {
@@ -218,11 +224,10 @@ fn collect_pending_orders(clients: &mut [Client], pending: &mut Vec<PendingOrder
             client.read_buf.drain(..size_of::<wire::WireOrderMsg>());
             pending.push(PendingOrder {
                 recv_ns,
+                tie_breaker: tie_rng.gen(),
                 client_idx,
-                seq: *seq,
                 msg,
             });
-            *seq += 1;
         }
     }
 }
