@@ -10,7 +10,7 @@ use rand::{Rng, SeedableRng};
 
 use super::wire;
 use crate::arg::ServeArgs;
-use crate::sim::exchange::SimExchange;
+use crate::sim::exchange::{SimExchange, L1};
 
 static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
 
@@ -50,9 +50,15 @@ struct Client {
     liquidation_sells: u64,
     liquidation_buy_qty: u64,
     liquidation_sell_qty: u64,
+    liquidation_buy_notional: u64,
+    liquidation_sell_notional: u64,
     liquidation_cash: i64,
     pre_liq_position: i64,
     missed_ioc: u64,
+    missed_ioc_buys: u64,
+    missed_ioc_sells: u64,
+    missed_ioc_buy_gap_sum: u64,
+    missed_ioc_sell_gap_sum: u64,
     disconnected: bool,
 }
 
@@ -78,9 +84,15 @@ impl Client {
             liquidation_sells: 0,
             liquidation_buy_qty: 0,
             liquidation_sell_qty: 0,
+            liquidation_buy_notional: 0,
+            liquidation_sell_notional: 0,
             liquidation_cash: 0,
             pre_liq_position: 0,
             missed_ioc: 0,
+            missed_ioc_buys: 0,
+            missed_ioc_sells: 0,
+            missed_ioc_buy_gap_sum: 0,
+            missed_ioc_sell_gap_sum: 0,
             disconnected: false,
         }
     }
@@ -108,10 +120,12 @@ impl Client {
             Side::Buy => {
                 self.liquidation_buys += 1;
                 self.liquidation_buy_qty += qty;
+                self.liquidation_buy_notional += price * qty;
             }
             Side::Sell => {
                 self.liquidation_sells += 1;
                 self.liquidation_sell_qty += qty;
+                self.liquidation_sell_notional += price * qty;
             }
         }
         self.liquidation_fills += 1;
@@ -192,36 +206,7 @@ pub fn run_server(args: &ServeArgs) {
         let l1 = exchange.step();
 
         if l1.valid() {
-            let now_ns = wire::now_ns();
-            let reference = wire::WireMdReference {
-                header: wire::WireMdHeader {
-                    timestamp_ns: now_ns,
-                    instrument_id: wire::DEFAULT_INSTRUMENT_ID,
-                    sequence_num: seq,
-                    msg_type: wire::MD_MSG_REFERENCE,
-                    _pad: [0; 7],
-                },
-                reference_mid: l1.reference_mid as f64,
-                _pad: [0; 8],
-            };
-            seq = seq.wrapping_add(1);
-            let _ = udp.send_to(unsafe { wire::as_bytes(&reference) }, md_addr);
-
-            let quote = wire::WireMdQuote {
-                header: wire::WireMdHeader {
-                    timestamp_ns: wire::now_ns(),
-                    instrument_id: wire::DEFAULT_INSTRUMENT_ID,
-                    sequence_num: seq,
-                    msg_type: wire::MD_MSG_QUOTE,
-                    _pad: [0; 7],
-                },
-                bid_price: l1.bid as f64,
-                ask_price: l1.ask as f64,
-                bid_size: l1.bid_qty as u32,
-                ask_size: l1.ask_qty as u32,
-            };
-            seq = seq.wrapping_add(1);
-            let _ = udp.send_to(unsafe { wire::as_bytes(&quote) }, md_addr);
+            send_md_snapshot(&udp, md_addr, &mut seq, &l1);
         }
 
         accept_clients(&tcp_listener, &mut clients, &mut next_client_id);
@@ -259,6 +244,43 @@ pub fn run_server(args: &ServeArgs) {
         ticks_run as f64 / total.as_secs_f64()
     );
     print_client_report(&finished_clients);
+}
+
+fn send_md_snapshot(udp: &UdpSocket, md_addr: SocketAddr, seq: &mut u32, l1: &L1) {
+    if !l1.valid() {
+        return;
+    }
+
+    let now_ns = wire::now_ns();
+    let reference = wire::WireMdReference {
+        header: wire::WireMdHeader {
+            timestamp_ns: now_ns,
+            instrument_id: wire::DEFAULT_INSTRUMENT_ID,
+            sequence_num: *seq,
+            msg_type: wire::MD_MSG_REFERENCE,
+            _pad: [0; 7],
+        },
+        reference_mid: l1.reference_mid as f64,
+        _pad: [0; 8],
+    };
+    *seq = (*seq).wrapping_add(1);
+    let _ = udp.send_to(unsafe { wire::as_bytes(&reference) }, md_addr);
+
+    let quote = wire::WireMdQuote {
+        header: wire::WireMdHeader {
+            timestamp_ns: wire::now_ns(),
+            instrument_id: wire::DEFAULT_INSTRUMENT_ID,
+            sequence_num: *seq,
+            msg_type: wire::MD_MSG_QUOTE,
+            _pad: [0; 7],
+        },
+        bid_price: l1.bid as f64,
+        ask_price: l1.ask as f64,
+        bid_size: l1.bid_qty as u32,
+        ask_size: l1.ask_qty as u32,
+    };
+    *seq = (*seq).wrapping_add(1);
+    let _ = udp.send_to(unsafe { wire::as_bytes(&quote) }, md_addr);
 }
 
 fn accept_clients(listener: &TcpListener, clients: &mut Vec<Client>, next_client_id: &mut u64) {
@@ -387,7 +409,38 @@ fn process_new_order(exchange: &mut SimExchange, order: &PendingOrder, clients: 
     let client = &mut clients[order.client_idx];
     client.orders_accepted += 1;
     if fills.is_empty() && msg.order_type == wire::ORDER_TYPE_IOC_LIMIT {
+        let l1 = exchange.debug_l1();
+        let gap = match side {
+            Side::Buy => l1.ask.saturating_sub(price),
+            Side::Sell => price.saturating_sub(l1.bid),
+        };
+        match side {
+            Side::Buy => {
+                client.missed_ioc_buys += 1;
+                client.missed_ioc_buy_gap_sum += gap;
+            }
+            Side::Sell => {
+                client.missed_ioc_sells += 1;
+                client.missed_ioc_sell_gap_sum += gap;
+            }
+        }
         client.missed_ioc += 1;
+        eprintln!(
+            "[missed_ioc] client={} order={} side={:?} limit={} qty={} gap={} tick={} bid={} ask={} bid_qty={} ask_qty={} ref={} target={}",
+            client.id,
+            msg.client_order_id,
+            side,
+            price,
+            qty,
+            gap,
+            exchange.tick(),
+            l1.bid,
+            l1.ask,
+            l1.bid_qty,
+            l1.ask_qty,
+            exchange.reference_mid(),
+            exchange.target_mid()
+        );
     } else if !fills.is_empty() {
         client.orders_filled += 1;
     }
@@ -515,9 +568,29 @@ fn print_client_report(clients: &[Client]) {
             0.0
         };
         let trading_cash = client.cash - client.liquidation_cash;
+        let liq_buy_avg = if client.liquidation_buy_qty > 0 {
+            client.liquidation_buy_notional as f64 / client.liquidation_buy_qty as f64
+        } else {
+            0.0
+        };
+        let liq_sell_avg = if client.liquidation_sell_qty > 0 {
+            client.liquidation_sell_notional as f64 / client.liquidation_sell_qty as f64
+        } else {
+            0.0
+        };
+        let missed_buy_avg_gap = if client.missed_ioc_buys > 0 {
+            client.missed_ioc_buy_gap_sum as f64 / client.missed_ioc_buys as f64
+        } else {
+            0.0
+        };
+        let missed_sell_avg_gap = if client.missed_ioc_sells > 0 {
+            client.missed_ioc_sell_gap_sum as f64 / client.missed_ioc_sells as f64
+        } else {
+            0.0
+        };
         eprintln!("--- Client {} ---", client.id);
         eprintln!(
-            "  Orders: sent={} accepted={} filled_orders={} missed_ioc={} rejected={} hit_rate={:.1}%",
+            "  Orders:      {} total, {} accepted, {} filled, {} missed IOC, {} rejected ({:.1}% hit)",
             client.orders_total,
             client.orders_accepted,
             client.orders_filled,
@@ -526,7 +599,14 @@ fn print_client_report(clients: &[Client]) {
             hit_rate
         );
         eprintln!(
-            "  Fills:  events={} qty={} buys={} buy_qty={} sells={} sell_qty={}",
+            "  Miss Debug:  {} buy misses (avg gap {:.2}), {} sell misses (avg gap {:.2})",
+            client.missed_ioc_buys,
+            missed_buy_avg_gap,
+            client.missed_ioc_sells,
+            missed_sell_avg_gap
+        );
+        eprintln!(
+            "  Fills:       {} events, {} qty ({} buys / {} buy qty, {} sells / {} sell qty)",
             client.fills,
             client.buy_qty + client.sell_qty,
             client.buys,
@@ -535,18 +615,22 @@ fn print_client_report(clients: &[Client]) {
             client.sell_qty
         );
         eprintln!(
-            "  Liq:    pre_pos={:+} final_pos={:+} fills={} qty={} buys={} buy_qty={} sells={} sell_qty={}",
+            "  Liquidation: pos {:+} -> {:+}, {} fills, {} qty",
             client.pre_liq_position,
             client.position,
             client.liquidation_fills,
-            client.liquidation_buy_qty + client.liquidation_sell_qty,
-            client.liquidation_buys,
-            client.liquidation_buy_qty,
-            client.liquidation_sells,
-            client.liquidation_sell_qty
+            client.liquidation_buy_qty + client.liquidation_sell_qty
         );
         eprintln!(
-            "  PnL:    trading_cash={:+} liq_cash={:+} final_cash={:+}",
+            "    Buy:       {} fills, {} qty @ {:.2}",
+            client.liquidation_buys, client.liquidation_buy_qty, liq_buy_avg
+        );
+        eprintln!(
+            "    Sell:      {} fills, {} qty @ {:.2}",
+            client.liquidation_sells, client.liquidation_sell_qty, liq_sell_avg
+        );
+        eprintln!(
+            "  PnL:         {} trading, {} liquidation, {} final",
             trading_cash, client.liquidation_cash, client.cash
         );
     }

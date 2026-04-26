@@ -25,7 +25,7 @@ const HALF_SPREAD: Price = 1;
 const LEVELS: Price = 50;
 const TOP_LEVEL_QTY: Qty = 1;
 const DEEP_LEVEL_QTY: Qty = 250;
-const REPRICE_DELAY: u64 = 6;
+const REPRICE_DELAY: u64 = 1000000;
 const REPRICE_STEP: Price = 1;
 
 #[allow(dead_code)]
@@ -143,6 +143,14 @@ impl SimExchange {
 
     pub fn reference_mid(&self) -> Price {
         self.reference_mid
+    }
+
+    pub fn target_mid(&self) -> Price {
+        self.target_mid
+    }
+
+    pub fn debug_l1(&self) -> L1 {
+        self.snapshot()
     }
 
     pub fn price_low(&self) -> Price {
