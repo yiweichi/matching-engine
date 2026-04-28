@@ -366,13 +366,13 @@ fn process_order_msg(exchange: &mut SimExchange, order: &PendingOrder, clients: 
         return;
     }
 
-    match order.msg.msg_type {
-        wire::ORDER_MSG_NEW => process_new_order(exchange, order, clients),
-        wire::ORDER_MSG_CANCEL => process_cancel_order(order, clients),
-        _ => eprintln!(
+    if order.msg.msg_type == wire::ORDER_MSG_NEW {
+        process_new_order(exchange, order, clients);
+    } else {
+        eprintln!(
             "[exchange] client {} unknown order msg_type: {}",
             clients[order.client_idx].id, order.msg.msg_type
-        ),
+        );
     }
 }
 
@@ -491,24 +491,6 @@ fn process_new_order(exchange: &mut SimExchange, order: &PendingOrder, clients: 
             );
         }
     }
-}
-
-fn process_cancel_order(order: &PendingOrder, clients: &mut [Client]) {
-    let msg = order.msg;
-    send_exec_report(
-        &mut clients[order.client_idx],
-        wire::WireExecReport {
-            exec_type: wire::EXEC_CANCEL_REJECT,
-            side: 0,
-            _pad1: [0; 2],
-            fill_qty: 0,
-            order_id: msg.cancel_order_id,
-            fill_price: 0.0,
-            leaves_qty: 0,
-            _pad2: 0,
-            timestamp_ns: wire::now_ns(),
-        },
-    );
 }
 
 fn send_exec_report(client: &mut Client, report: wire::WireExecReport) {

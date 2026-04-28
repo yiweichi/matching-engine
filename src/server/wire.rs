@@ -8,12 +8,10 @@ pub const MD_MSG_TRADE: u8 = 3;
 pub const MD_MSG_REFERENCE: u8 = 4;
 
 pub const ORDER_MSG_NEW: u8 = 1;
-pub const ORDER_MSG_CANCEL: u8 = 2;
 
 pub const SIDE_BUY: u8 = 0;
 pub const SIDE_SELL: u8 = 1;
 
-pub const ORDER_TYPE_LIMIT: u8 = 0;
 pub const ORDER_TYPE_MARKET: u8 = 1;
 pub const ORDER_TYPE_IOC_LIMIT: u8 = 2;
 
@@ -100,7 +98,6 @@ pub struct WireOrderMsg {
     pub price: f64,
     pub qty: u32,
     pub _pad2: u32,
-    pub cancel_order_id: u64,
 }
 
 #[repr(C)]
@@ -126,7 +123,7 @@ const _: () = {
     assert!(std::mem::size_of::<WireMdDepthLevel>() == 16);
     assert!(std::mem::size_of::<WireMdDepth>() == 352);
     assert!(std::mem::size_of::<WireMdTrade>() == 40);
-    assert!(std::mem::size_of::<WireOrderMsg>() == 40);
+    assert!(std::mem::size_of::<WireOrderMsg>() == 32);
     assert!(std::mem::size_of::<WireExecReport>() == 40);
 };
 
