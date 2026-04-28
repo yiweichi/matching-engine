@@ -4,7 +4,7 @@ use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream, UdpSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use matching_engine::{OrderType, Qty, Side};
+use matching_engine::{Qty, Side};
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
 
@@ -203,7 +203,7 @@ pub fn run_server(args: &ServeArgs) {
     {
         let tick_start = Instant::now();
 
-        let l1 = exchange.step();
+        let l1: L1 = exchange.step();
 
         if l1.valid() {
             send_md_snapshot(&udp, md_addr, &mut seq, &l1);
@@ -361,7 +361,7 @@ fn process_order_msg(exchange: &mut SimExchange, order: &PendingOrder, clients: 
 
     match order.msg.msg_type {
         wire::ORDER_MSG_NEW => process_new_order(exchange, order, clients),
-        wire::ORDER_MSG_CANCEL => process_cancel_order(exchange, order, clients),
+        wire::ORDER_MSG_CANCEL => process_cancel_order(order, clients),
         _ => eprintln!(
             "[exchange] client {} unknown order msg_type: {}",
             clients[order.client_idx].id, order.msg.msg_type
@@ -379,12 +379,7 @@ fn process_new_order(exchange: &mut SimExchange, order: &PendingOrder, clients: 
 
     let fills = match msg.order_type {
         wire::ORDER_TYPE_IOC_LIMIT => exchange.submit_ioc_limit(side, price, qty),
-        wire::ORDER_TYPE_LIMIT => {
-            exchange.submit_hft_order(msg.client_order_id, side, price, qty, OrderType::Limit)
-        }
-        wire::ORDER_TYPE_MARKET => {
-            exchange.submit_hft_order(msg.client_order_id, side, price, qty, OrderType::Market)
-        }
+        wire::ORDER_TYPE_MARKET => exchange.submit_market(side, qty),
         _ => {
             let client = &mut clients[order.client_idx];
             client.orders_rejected += 1;
@@ -507,18 +502,12 @@ fn process_new_order(exchange: &mut SimExchange, order: &PendingOrder, clients: 
     }
 }
 
-fn process_cancel_order(exchange: &mut SimExchange, order: &PendingOrder, clients: &mut [Client]) {
+fn process_cancel_order(order: &PendingOrder, clients: &mut [Client]) {
     let msg = order.msg;
-    let success = exchange.cancel_hft_order(msg.cancel_order_id);
-    let exec_type = if success {
-        wire::EXEC_CANCEL_ACK
-    } else {
-        wire::EXEC_CANCEL_REJECT
-    };
     send_exec_report(
         &mut clients[order.client_idx],
         wire::WireExecReport {
-            exec_type,
+            exec_type: wire::EXEC_CANCEL_REJECT,
             side: 0,
             _pad1: [0; 2],
             fill_qty: 0,

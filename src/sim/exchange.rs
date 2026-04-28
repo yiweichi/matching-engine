@@ -1,31 +1,13 @@
 use matching_engine::{Fill, Order, OrderBook, OrderId, OrderType, Price, Qty, Side};
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
-use rustc_hash::FxHashMap;
-
-/// Passive fill against a resting HFT order, detected during exchange repricing.
-#[allow(dead_code)]
-#[derive(Debug, Clone)]
-pub struct HftFillReport {
-    pub order_id: OrderId,
-    pub side: Side,
-    pub price: Price,
-    pub qty: Qty,
-    pub leaves_qty: Qty,
-}
-
-#[allow(dead_code)]
-struct HftOrderState {
-    side: Side,
-    remaining_qty: Qty,
-}
 
 const INITIAL_MID: Price = 10_000;
 const HALF_SPREAD: Price = 1;
 const LEVELS: Price = 50;
 const TOP_LEVEL_QTY: Qty = 1;
 const DEEP_LEVEL_QTY: Qty = 250;
-const REPRICE_DELAY: u64 = 1000000;
+const REPRICE_DELAY: u64 = 20;
 const REPRICE_STEP: Price = 1;
 
 #[allow(dead_code)]
@@ -63,8 +45,6 @@ pub struct SimExchange {
     price_low: Price,
     price_high: Price,
     pub num_events: u64,
-    hft_orders: FxHashMap<OrderId, HftOrderState>,
-    pending_hft_fills: Vec<HftFillReport>,
     fills_buf: Vec<Fill>,
 }
 
@@ -85,8 +65,6 @@ impl SimExchange {
             price_low: INITIAL_MID,
             price_high: INITIAL_MID,
             num_events: 0,
-            hft_orders: FxHashMap::default(),
-            pending_hft_fills: Vec::new(),
             fills_buf: Vec::with_capacity(64),
         };
         ex.rebuild_book(INITIAL_MID);
@@ -161,62 +139,6 @@ impl SimExchange {
         self.price_high
     }
 
-    // ── HFT client interface ─────────────────────────────────────────────
-
-    /// Submit an order on behalf of the HFT client. Returns immediate fills.
-    /// If the order has remaining qty and is a limit order, it rests on the book
-    /// and future passive fills will be queued in `pending_hft_fills`.
-    pub fn submit_hft_order(
-        &mut self,
-        id: OrderId,
-        side: Side,
-        price: Price,
-        qty: Qty,
-        order_type: OrderType,
-    ) -> Vec<Fill> {
-        let order = Order {
-            id,
-            side,
-            price,
-            qty,
-            order_type,
-        };
-        self.fills_buf.clear();
-        self.book.add_order(order, &mut self.fills_buf);
-        let fills = self.fills_buf.clone();
-
-        let filled: Qty = fills.iter().map(|f| f.qty).sum();
-        let remaining = qty.saturating_sub(filled);
-
-        if remaining > 0 && order_type == OrderType::Limit {
-            self.hft_orders.insert(
-                id,
-                HftOrderState {
-                    side,
-                    remaining_qty: remaining,
-                },
-            );
-        }
-
-        fills
-    }
-
-    /// Cancel a resting HFT limit order. Returns true if the order was found.
-    pub fn cancel_hft_order(&mut self, order_id: OrderId) -> bool {
-        if self.book.cancel(order_id) {
-            self.hft_orders.remove(&order_id);
-            true
-        } else {
-            false
-        }
-    }
-
-    #[allow(dead_code)]
-    /// Drain passive fill reports accumulated during the last `step()`.
-    pub fn drain_hft_reports(&mut self) -> Vec<HftFillReport> {
-        std::mem::take(&mut self.pending_hft_fills)
-    }
-
     fn advance_reference(&mut self) {
         if self.ticks_to_next_event > 0 {
             self.ticks_to_next_event -= 1;
@@ -264,13 +186,11 @@ impl SimExchange {
 
     fn rebuild_book(&mut self, mid: Price) {
         self.book = OrderBook::with_capacity(200_000);
-        self.hft_orders.clear();
-        self.pending_hft_fills.clear();
 
         for offset in 1..=LEVELS {
             let bid_price = mid.saturating_sub(offset).max(1);
             let ask_price = mid + offset;
-            let qty = if offset == 1 {
+            let qty = if offset <= 10 {
                 TOP_LEVEL_QTY
             } else {
                 DEEP_LEVEL_QTY
