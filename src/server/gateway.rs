@@ -36,6 +36,7 @@ struct Client {
     read_buf: Vec<u8>,
     position: i64,
     cash: i64,
+    liquidation_pnl: f64,
     orders_total: u64,
     orders_accepted: u64,
     orders_filled: u64,
@@ -70,6 +71,7 @@ impl Client {
             read_buf: Vec::with_capacity(4096),
             position: 0,
             cash: 0,
+            liquidation_pnl: 0.0,
             orders_total: 0,
             orders_accepted: 0,
             orders_filled: 0,
@@ -219,7 +221,7 @@ pub fn run_server(args: &ServeArgs) {
             process_order_msg(&mut exchange, &order, &mut clients);
         }
 
-        archive_disconnected_clients(&mut clients, &mut finished_clients);
+        archive_disconnected_clients(&mut exchange, &mut clients, &mut finished_clients);
         ticks_run += 1;
 
         let elapsed = tick_start.elapsed();
@@ -232,7 +234,6 @@ pub fn run_server(args: &ServeArgs) {
         eprintln!("[exchange] shutdown requested; liquidating clients and printing report...");
     }
 
-    liquidate_clients(&mut exchange, &mut finished_clients);
     liquidate_clients(&mut exchange, &mut clients);
     finished_clients.append(&mut clients);
 
@@ -305,11 +306,17 @@ fn accept_clients(listener: &TcpListener, clients: &mut Vec<Client>, next_client
     }
 }
 
-fn archive_disconnected_clients(clients: &mut Vec<Client>, finished_clients: &mut Vec<Client>) {
+fn archive_disconnected_clients(
+    exchange: &mut SimExchange,
+    clients: &mut Vec<Client>,
+    finished_clients: &mut Vec<Client>,
+) {
     let mut i = 0;
     while i < clients.len() {
         if clients[i].disconnected {
-            finished_clients.push(clients.swap_remove(i));
+            let mut client = clients.swap_remove(i);
+            liquidate_client(exchange, &mut client);
+            finished_clients.push(client);
         } else {
             i += 1;
         }
@@ -420,22 +427,6 @@ fn process_new_order(exchange: &mut SimExchange, order: &PendingOrder, clients: 
             }
         }
         client.missed_ioc += 1;
-        eprintln!(
-            "[missed_ioc] client={} order={} side={:?} limit={} qty={} gap={} tick={} bid={} ask={} bid_qty={} ask_qty={} ref={} target={}",
-            client.id,
-            msg.client_order_id,
-            side,
-            price,
-            qty,
-            gap,
-            exchange.tick(),
-            l1.bid,
-            l1.ask,
-            l1.bid_qty,
-            l1.ask_qty,
-            exchange.reference_mid(),
-            exchange.target_mid()
-        );
     } else if !fills.is_empty() {
         client.orders_filled += 1;
     }
@@ -532,20 +523,36 @@ fn send_exec_report(client: &mut Client, report: wire::WireExecReport) {
 
 fn liquidate_clients(exchange: &mut SimExchange, clients: &mut [Client]) {
     for client in clients {
-        client.pre_liq_position = client.position;
-        let position = client.position;
-        if position > 0 {
-            let fills = exchange.submit_market(Side::Sell, position as Qty);
-            for fill in fills {
-                client.apply_liquidation_fill(Side::Sell, fill.price, fill.qty);
-            }
-        } else if position < 0 {
-            let fills = exchange.submit_market(Side::Buy, (-position) as Qty);
-            for fill in fills {
-                client.apply_liquidation_fill(Side::Buy, fill.price, fill.qty);
-            }
+        liquidate_client(exchange, client);
+    }
+}
+
+fn liquidate_client(exchange: &mut SimExchange, client: &mut Client) {
+    client.pre_liq_position = client.position;
+    let position = client.position;
+    let l1 = exchange.debug_l1();
+    let mark_price = if l1.valid() {
+        (l1.bid + l1.ask) as f64 * 0.5
+    } else {
+        0.0
+    };
+    let pre_liq_mark_pnl = position as f64 * mark_price;
+    let old_liquidation_cash = client.liquidation_cash;
+
+    if position > 0 {
+        let fills = exchange.submit_market(Side::Sell, position as Qty);
+        for fill in fills {
+            client.apply_liquidation_fill(Side::Sell, fill.price, fill.qty);
+        }
+    } else if position < 0 {
+        let fills = exchange.submit_market(Side::Buy, (-position) as Qty);
+        for fill in fills {
+            client.apply_liquidation_fill(Side::Buy, fill.price, fill.qty);
         }
     }
+
+    let liquidation_cash_delta = client.liquidation_cash - old_liquidation_cash;
+    client.liquidation_pnl += liquidation_cash_delta as f64 - pre_liq_mark_pnl;
 }
 
 fn print_client_report(clients: &[Client]) {
@@ -556,7 +563,8 @@ fn print_client_report(clients: &[Client]) {
         } else {
             0.0
         };
-        let trading_cash = client.cash - client.liquidation_cash;
+        let total_pnl = client.cash as f64;
+        let realized_pnl = total_pnl - client.liquidation_pnl;
         let liq_buy_avg = if client.liquidation_buy_qty > 0 {
             client.liquidation_buy_notional as f64 / client.liquidation_buy_qty as f64
         } else {
@@ -619,8 +627,8 @@ fn print_client_report(clients: &[Client]) {
             client.liquidation_sells, client.liquidation_sell_qty, liq_sell_avg
         );
         eprintln!(
-            "  PnL:         {} trading, {} liquidation, {} final",
-            trading_cash, client.liquidation_cash, client.cash
+            "  PnL:         realized {:+.2}, liquidation {:+.2}, total {:+.2}",
+            realized_pnl, client.liquidation_pnl, total_pnl
         );
     }
 }

@@ -123,10 +123,6 @@ impl SimExchange {
         self.reference_mid
     }
 
-    pub fn target_mid(&self) -> Price {
-        self.target_mid
-    }
-
     pub fn debug_l1(&self) -> L1 {
         self.snapshot()
     }
