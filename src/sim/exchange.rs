@@ -7,8 +7,8 @@ const HALF_SPREAD: Price = 1;
 const LEVELS: Price = 50;
 const TOP_LEVEL_QTY: Qty = 1;
 const DEEP_LEVEL_QTY: Qty = 250;
+const REFERENCE_EVENT_INTERVAL: u64 = 300;
 const REPRICE_DELAY: u64 = 20;
-const REPRICE_STEP: Price = 1;
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy)]
@@ -145,8 +145,11 @@ impl SimExchange {
             return;
         }
 
+        let old_mid = self.target_mid;
         let jump = self.rng.gen_range(3..=6);
-        match self.next_event_side {
+        let jump_side = self.next_event_side;
+
+        match jump_side {
             Side::Buy => {
                 self.reference_mid += jump;
                 self.next_event_side = Side::Sell;
@@ -158,8 +161,9 @@ impl SimExchange {
         }
 
         self.last_reference_jump_tick = self.tick;
-        self.ticks_to_next_event = self.rng.gen_range(500..=1200);
+        self.ticks_to_next_event = REFERENCE_EVENT_INTERVAL;
         self.num_events += 1;
+        self.rebuild_book_with_stale_quote(old_mid, self.reference_mid, jump_side);
     }
 
     fn advance_target_book(&mut self) {
@@ -170,18 +174,8 @@ impl SimExchange {
             return;
         }
 
-        let next_mid = if self.target_mid < self.reference_mid {
-            (self.target_mid + REPRICE_STEP).min(self.reference_mid)
-        } else {
-            self.target_mid
-                .saturating_sub(REPRICE_STEP)
-                .max(self.reference_mid)
-        };
-
-        if next_mid != self.target_mid {
-            self.target_mid = next_mid;
-            self.rebuild_book(next_mid);
-        }
+        self.target_mid = self.reference_mid;
+        self.rebuild_book(self.target_mid);
     }
 
     fn rebuild_book(&mut self, mid: Price) {
@@ -197,6 +191,37 @@ impl SimExchange {
             };
             self.place_liquidity(Side::Buy, bid_price, qty);
             self.place_liquidity(Side::Sell, ask_price, qty);
+        }
+    }
+
+    fn rebuild_book_with_stale_quote(&mut self, old_mid: Price, new_mid: Price, jump_side: Side) {
+        self.book = OrderBook::with_capacity(200_000);
+
+        match jump_side {
+            Side::Buy => {
+                self.place_side(Side::Buy, old_mid);
+                self.place_liquidity(Side::Sell, old_mid + HALF_SPREAD, TOP_LEVEL_QTY);
+                self.place_side(Side::Sell, new_mid);
+            }
+            Side::Sell => {
+                self.place_side(Side::Sell, old_mid);
+                self.place_liquidity(
+                    Side::Buy,
+                    old_mid.saturating_sub(HALF_SPREAD).max(1),
+                    TOP_LEVEL_QTY,
+                );
+                self.place_side(Side::Buy, new_mid);
+            }
+        }
+    }
+
+    fn place_side(&mut self, side: Side, mid: Price) {
+        for offset in 1..=LEVELS {
+            let price = match side {
+                Side::Buy => mid.saturating_sub(offset).max(1),
+                Side::Sell => mid + offset,
+            };
+            self.place_liquidity(side, price, DEEP_LEVEL_QTY);
         }
     }
 
