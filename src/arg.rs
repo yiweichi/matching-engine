@@ -31,6 +31,10 @@ pub enum Command {
     Bench(BenchArgs),
     /// Run a lightweight workload driver for perf/flamegraph.
     Profile(ProfileArgs),
+    /// Run a trading simulation: two strategies compete, one deliberately slower.
+    Sim(SimArgs),
+    /// Run as an exchange server: broadcast market data via UDP, accept orders via TCP.
+    Serve(ServeArgs),
 }
 
 #[derive(Debug, Args, Default)]
@@ -83,4 +87,73 @@ pub struct ProfileArgs {
         help = "Repeat the selected workload N times in one process"
     )]
     pub repeat: u64,
+}
+
+#[derive(Debug, Args)]
+pub struct SimArgs {
+    #[arg(long, default_value_t = 1_000_000, help = "Number of simulation ticks")]
+    pub ticks: u64,
+
+    #[arg(
+        long,
+        default_value_t = 0,
+        help = "Fast trader: market data latency in ticks"
+    )]
+    pub fast_md_latency: u64,
+
+    #[arg(
+        long,
+        default_value_t = 0,
+        help = "Fast trader: order submission latency in ticks"
+    )]
+    pub fast_order_latency: u64,
+
+    #[arg(
+        long,
+        default_value_t = 100,
+        help = "Slow trader: market data latency in ticks"
+    )]
+    pub slow_md_latency: u64,
+
+    #[arg(
+        long,
+        default_value_t = 100,
+        help = "Slow trader: order submission latency in ticks"
+    )]
+    pub slow_order_latency: u64,
+
+    #[arg(long, default_value_t = 1, help = "Maximum position per trader")]
+    pub max_position: i64,
+
+    #[arg(long, default_value_t = 42, help = "Random seed for reproducibility")]
+    pub seed: u64,
+}
+
+#[derive(Debug, Args)]
+pub struct ServeArgs {
+    #[arg(
+        long,
+        default_value_t = 12345,
+        help = "UDP port for market data broadcast"
+    )]
+    pub md_port: u16,
+
+    #[arg(
+        long,
+        default_value = "239.1.1.1",
+        help = "IPv4 multicast group for market data broadcast"
+    )]
+    pub md_group: String,
+
+    #[arg(long, default_value_t = 12346, help = "TCP port for order gateway")]
+    pub order_port: u16,
+
+    #[arg(long, default_value_t = 10_000, help = "Exchange ticks per second")]
+    pub tick_rate: u64,
+
+    #[arg(long, default_value_t = 0, help = "Total ticks to run (0 = unlimited)")]
+    pub ticks: u64,
+
+    #[arg(long, default_value_t = 42, help = "Random seed")]
+    pub seed: u64,
 }

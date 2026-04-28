@@ -1,12 +1,14 @@
 mod arg;
 mod bench;
+mod server;
+mod sim;
 
 use std::time::Instant;
 
 #[global_allocator]
 static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-use arg::{BenchArgs, Cli, Command, ProfileArgs, Scenario};
+use arg::{BenchArgs, Cli, Command, ProfileArgs, Scenario, ServeArgs, SimArgs};
 use bench::harness::*;
 use bench::scenarios;
 use clap::{Parser, ValueEnum};
@@ -233,6 +235,31 @@ fn try_mlockall() {
     }
 }
 
+fn run_serve(args: &ServeArgs) {
+    server::gateway::run_server(args);
+}
+
+fn run_sim(args: &SimArgs) {
+    let cfg = sim::runner::SimConfig {
+        ticks: args.ticks,
+        fast_md_latency: args.fast_md_latency,
+        fast_order_latency: args.fast_order_latency,
+        slow_md_latency: args.slow_md_latency,
+        slow_order_latency: args.slow_order_latency,
+        max_position: args.max_position,
+        seed: args.seed,
+    };
+
+    let t0 = Instant::now();
+    let result = sim::runner::run(&cfg);
+    let elapsed = t0.elapsed();
+
+    let report = result.format_report();
+    print!("{}", report);
+    eprintln!("simulation completed in {:.2?}", elapsed);
+    result.save();
+}
+
 fn main() {
     let cli = Cli::parse();
 
@@ -240,6 +267,8 @@ fn main() {
 
     match cli.command.unwrap_or(Command::Bench(BenchArgs::default())) {
         Command::Profile(args) => run_profile(&args),
+        Command::Sim(args) => run_sim(&args),
+        Command::Serve(args) => run_serve(&args),
         Command::Bench(args) => {
             let mut r = Reporter::new();
 
