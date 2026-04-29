@@ -1,6 +1,6 @@
 use matching_engine::{Fill, Order, OrderBook, OrderId, OrderType, Price, Qty, Side};
 use rand::rngs::SmallRng;
-use rand::{Rng, SeedableRng};
+use rand::SeedableRng;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const INITIAL_MID: Price = 10_000;
@@ -58,7 +58,7 @@ impl L1 {
 pub struct SimExchange {
     book: OrderBook,
     next_id: OrderId,
-    rng: SmallRng,
+    _rng: SmallRng,
     tick: u64,
     reference_mid: Price,
     target_mid: Price,
@@ -75,17 +75,16 @@ pub struct SimExchange {
 
 impl SimExchange {
     pub fn new(seed: u64) -> Self {
-        let mut rng = SmallRng::seed_from_u64(seed);
-        let first_event = rng.gen_range(200..=600);
+        let _rng = SmallRng::seed_from_u64(seed);
         let mut ex = Self {
             book: OrderBook::with_capacity(200_000),
             next_id: 1_000_000,
-            rng,
+            _rng,
             tick: 0,
             reference_mid: INITIAL_MID,
             target_mid: INITIAL_MID,
             last_reference_jump_tick: 0,
-            ticks_to_next_event: first_event,
+            ticks_to_next_event: REFERENCE_EVENT_INTERVAL,
             next_event_side: Side::Buy,
             price_low: INITIAL_MID,
             price_high: INITIAL_MID,
@@ -198,7 +197,7 @@ impl SimExchange {
         }
 
         let old_mid = self.target_mid;
-        let jump = self.rng.gen_range(3..=6);
+        let jump = 6;
         let jump_side = self.next_event_side;
 
         match jump_side {
