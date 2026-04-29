@@ -3,8 +3,6 @@
 // ── Wire protocol constants (must match C++ include/nts/wire_protocol.h) ─────
 
 pub const MD_MSG_QUOTE: u8 = 1;
-pub const MD_MSG_DEPTH: u8 = 2;
-pub const MD_MSG_TRADE: u8 = 3;
 pub const MD_MSG_REFERENCE: u8 = 4;
 
 pub const ORDER_MSG_NEW: u8 = 1;
@@ -56,35 +54,6 @@ pub struct WireMdReference {
     pub _pad: [u8; 8],
 }
 
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct WireMdDepthLevel {
-    pub price: f64,
-    pub size: u32,
-    pub order_count: u32,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct WireMdDepth {
-    pub header: WireMdHeader,
-    pub bid_levels: u8,
-    pub ask_levels: u8,
-    pub _pad: [u8; 6],
-    pub bids: [WireMdDepthLevel; 10],
-    pub asks: [WireMdDepthLevel; 10],
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct WireMdTrade {
-    pub header: WireMdHeader,
-    pub price: f64,
-    pub size: u32,
-    pub aggressor_side: u8,
-    pub _pad: [u8; 3],
-}
-
 // ── Order / execution report wire structs ────────────────────────────────────
 
 #[repr(C)]
@@ -120,9 +89,6 @@ const _: () = {
     assert!(std::mem::size_of::<WireMdHeader>() == 24);
     assert!(std::mem::size_of::<WireMdQuote>() == 48);
     assert!(std::mem::size_of::<WireMdReference>() == 40);
-    assert!(std::mem::size_of::<WireMdDepthLevel>() == 16);
-    assert!(std::mem::size_of::<WireMdDepth>() == 352);
-    assert!(std::mem::size_of::<WireMdTrade>() == 40);
     assert!(std::mem::size_of::<WireOrderMsg>() == 32);
     assert!(std::mem::size_of::<WireExecReport>() == 40);
 };
