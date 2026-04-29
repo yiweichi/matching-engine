@@ -29,7 +29,7 @@ impl Default for SimConfig {
 }
 
 pub fn run(cfg: &SimConfig) -> SimResult {
-    let mut exchange = SimExchange::new(cfg.seed);
+    let mut exchange = SimExchange::new();
 
     let mut fast = Trader::new(TraderConfig {
         name: "A (fast)".into(),

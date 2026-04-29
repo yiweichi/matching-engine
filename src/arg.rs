@@ -124,9 +124,6 @@ pub struct SimArgs {
 
     #[arg(long, default_value_t = 1, help = "Maximum position per trader")]
     pub max_position: i64,
-
-    #[arg(long, default_value_t = 42, help = "Random seed for reproducibility")]
-    pub seed: u64,
 }
 
 #[derive(Debug, Args)]
@@ -167,7 +164,4 @@ pub struct ServeArgs {
 
     #[arg(long, default_value_t = 0, help = "Total ticks to run (0 = unlimited)")]
     pub ticks: u64,
-
-    #[arg(long, default_value_t = 42, help = "Random seed")]
-    pub seed: u64,
 }
