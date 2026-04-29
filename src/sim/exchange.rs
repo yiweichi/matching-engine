@@ -1,7 +1,6 @@
 use matching_engine::{Fill, Order, OrderBook, OrderId, OrderType, Price, Qty, Side};
 use rand::rngs::SmallRng;
 use rand::SeedableRng;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 const INITIAL_MID: Price = 10_000;
 const HALF_SPREAD: Price = 1;
@@ -31,7 +30,6 @@ pub struct IocResult {
 #[derive(Debug, Clone, Copy)]
 pub struct StaleOutcome {
     pub filled: bool,
-    pub decision_latency_ns: u64,
     pub arrival_lag_ticks: u64,
 }
 
@@ -40,7 +38,6 @@ struct StaleQuote {
     side: Side,
     price: Price,
     event_tick: u64,
-    event_ns: u64,
     active: bool,
 }
 
@@ -107,14 +104,8 @@ impl SimExchange {
         snap
     }
 
-    pub fn submit_ioc_limit_at(
-        &mut self,
-        side: Side,
-        price: Price,
-        qty: Qty,
-        recv_ns: u64,
-    ) -> IocResult {
-        let stale_attempt = self.stale_attempt(side, price, recv_ns);
+    pub fn submit_ioc_limit_at(&mut self, side: Side, price: Price, qty: Qty) -> IocResult {
+        let stale_attempt = self.stale_attempt(side, price);
         let id = self.alloc_id();
         self.fills_buf.clear();
         self.book.add_order(
@@ -264,7 +255,6 @@ impl SimExchange {
                     side: Side::Buy,
                     price: stale_price,
                     event_tick: self.tick,
-                    event_ns: now_ns(),
                     active: true,
                 });
             }
@@ -277,14 +267,13 @@ impl SimExchange {
                     side: Side::Sell,
                     price: stale_price,
                     event_tick: self.tick,
-                    event_ns: now_ns(),
                     active: true,
                 });
             }
         }
     }
 
-    fn stale_attempt(&self, side: Side, price: Price, recv_ns: u64) -> Option<StaleOutcome> {
+    fn stale_attempt(&self, side: Side, price: Price) -> Option<StaleOutcome> {
         let stale = self.stale_quote?;
         let price_crosses = match side {
             Side::Buy => price >= stale.price,
@@ -295,7 +284,6 @@ impl SimExchange {
         }
         Some(StaleOutcome {
             filled: false,
-            decision_latency_ns: recv_ns.saturating_sub(stale.event_ns),
             arrival_lag_ticks: self.tick.saturating_sub(stale.event_tick),
         })
     }
@@ -360,11 +348,4 @@ impl SimExchange {
         self.next_id += 1;
         id
     }
-}
-
-fn now_ns() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos() as u64
 }

@@ -116,7 +116,7 @@ pub fn run(cfg: &SimConfig) -> SimResult {
 fn execute_orders(exchange: &mut SimExchange, trader: &mut Trader, orders: Vec<(Action, u64)>) {
     for (action, decision_latency_ticks) in orders {
         let result =
-            exchange.submit_ioc_limit_at(action.side(), action.limit_price(), action.qty(), 0);
+            exchange.submit_ioc_limit_at(action.side(), action.limit_price(), action.qty());
         let fills = result.fills;
         if let Some(outcome) = result.stale_outcome {
             trader.record_stale_outcome(

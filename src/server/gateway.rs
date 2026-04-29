@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 
 use matching_engine::{Qty, Side};
 use rand::rngs::SmallRng;
+use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
 
 use super::wire;
@@ -62,7 +63,6 @@ struct Client {
     missed_ioc_sell_gap_sum: u64,
     stale_fills: u64,
     stale_misses: u64,
-    stale_decision_latency_ns_sum: u128,
     stale_arrival_lag_ticks_sum: u64,
     disconnected: bool,
 }
@@ -101,7 +101,6 @@ impl Client {
             missed_ioc_sell_gap_sum: 0,
             stale_fills: 0,
             stale_misses: 0,
-            stale_decision_latency_ns_sum: 0,
             stale_arrival_lag_ticks_sum: 0,
             disconnected: false,
         }
@@ -162,14 +161,12 @@ impl Client {
         } else {
             self.stale_misses += 1;
         }
-        self.stale_decision_latency_ns_sum += outcome.decision_latency_ns as u128;
         self.stale_arrival_lag_ticks_sum += outcome.arrival_lag_ticks;
     }
 }
 
 #[derive(Clone, Copy)]
 struct PendingOrder {
-    recv_ns: u64,
     tie_breaker: u64,
     client_idx: usize,
     msg: wire::WireOrderMsg,
@@ -237,7 +234,7 @@ pub fn run_server(args: &ServeArgs) {
 
         let mut pending = Vec::new();
         collect_pending_orders(&mut clients, &mut pending, &mut tie_rng);
-        pending.sort_by_key(|order| (order.recv_ns, order.tie_breaker));
+        pending.sort_by_key(|order| order.tie_breaker);
 
         for order in pending {
             process_order_msg(&mut exchange, &order, &mut clients);
@@ -365,7 +362,11 @@ fn collect_pending_orders(
     pending: &mut Vec<PendingOrder>,
     tie_rng: &mut SmallRng,
 ) {
-    for (client_idx, client) in clients.iter_mut().enumerate() {
+    let mut client_order: Vec<usize> = (0..clients.len()).collect();
+    client_order.shuffle(tie_rng);
+
+    for client_idx in client_order {
+        let client = &mut clients[client_idx];
         let mut tmp = [0u8; 4096];
         loop {
             match client.stream.read(&mut tmp) {
@@ -385,11 +386,9 @@ fn collect_pending_orders(
         }
 
         while client.read_buf.len() >= size_of::<wire::WireOrderMsg>() {
-            let recv_ns = wire::now_ns();
             let msg = unsafe { wire::from_bytes::<wire::WireOrderMsg>(&client.read_buf) };
             client.read_buf.drain(..size_of::<wire::WireOrderMsg>());
             pending.push(PendingOrder {
-                recv_ns,
                 tie_breaker: tie_rng.gen(),
                 client_idx,
                 msg,
@@ -423,7 +422,7 @@ fn process_new_order(exchange: &mut SimExchange, order: &PendingOrder, clients: 
 
     let (fills, stale_outcome) = match msg.order_type {
         wire::ORDER_TYPE_IOC_LIMIT => {
-            let result = exchange.submit_ioc_limit_at(side, price, qty, order.recv_ns);
+            let result = exchange.submit_ioc_limit_at(side, price, qty);
             (result.fills, result.stale_outcome)
         }
         wire::ORDER_TYPE_MARKET => (exchange.submit_market(side, qty), None),
@@ -590,32 +589,22 @@ fn print_client_report(clients: &[Client], exchange: &SimExchange) {
     } else {
         0.0
     };
-    let stale_latency_sum: u128 = clients
-        .iter()
-        .map(|client| client.stale_decision_latency_ns_sum)
-        .sum();
     let stale_lag_sum: u64 = clients
         .iter()
         .map(|client| client.stale_arrival_lag_ticks_sum)
         .sum();
-    let avg_decision_latency_us = if stale_attempts > 0 {
-        stale_latency_sum as f64 / stale_attempts as f64 / 1_000.0
-    } else {
-        0.0
-    };
     let avg_arrival_lag_ticks = if stale_attempts > 0 {
         stale_lag_sum as f64 / stale_attempts as f64
     } else {
         0.0
     };
     eprintln!(
-        "Stale: events {}, fills {}, misses {}, expired {}, capture {:.1}%, avg decision latency {:.2} us, avg arrival lag {:.2} ticks",
+        "Stale: events {}, fills {}, misses {}, expired {}, capture {:.1}%, avg arrival lag {:.2} ticks",
         exchange.stale_events(),
         stale_fills,
         stale_misses,
         exchange.expired_stale_quotes(),
         stale_capture_rate,
-        avg_decision_latency_us,
         avg_arrival_lag_ticks
     );
     for client in clients {
@@ -652,11 +641,6 @@ fn print_client_report(clients: &[Client], exchange: &SimExchange) {
         } else {
             0.0
         };
-        let avg_decision_latency_us = if stale_attempts > 0 {
-            client.stale_decision_latency_ns_sum as f64 / stale_attempts as f64 / 1_000.0
-        } else {
-            0.0
-        };
         let avg_arrival_lag_ticks = if stale_attempts > 0 {
             client.stale_arrival_lag_ticks_sum as f64 / stale_attempts as f64
         } else {
@@ -680,12 +664,8 @@ fn print_client_report(clients: &[Client], exchange: &SimExchange) {
             missed_sell_avg_gap
         );
         eprintln!(
-            "  Stale:       {} fills, {} misses, capture {:.1}%, avg decision latency {:.2} us, avg arrival lag {:.2} ticks",
-            client.stale_fills,
-            client.stale_misses,
-            stale_capture_rate,
-            avg_decision_latency_us,
-            avg_arrival_lag_ticks
+            "  Stale:       {} fills, {} misses, capture {:.1}%, avg arrival lag {:.2} ticks",
+            client.stale_fills, client.stale_misses, stale_capture_rate, avg_arrival_lag_ticks
         );
         eprintln!(
             "  Fills:       {} events, {} qty ({} buys / {} buy qty, {} sells / {} sell qty)",
