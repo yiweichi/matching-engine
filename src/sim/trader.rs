@@ -22,9 +22,13 @@ pub struct Trader {
     pub total_buy_cost: i64,
     pub total_sell_proceeds: i64,
     pub missed_orders: u64,
+    pub stale_fills: u64,
+    pub stale_misses: u64,
+    pub stale_decision_latency_ticks_sum: u64,
+    pub stale_arrival_lag_ticks_sum: u64,
     strategy: Strategy,
     md_queue: VecDeque<(u64, L1)>,
-    order_queue: VecDeque<(u64, Action)>,
+    order_queue: VecDeque<(u64, Action, u64)>,
 }
 
 impl Trader {
@@ -41,6 +45,10 @@ impl Trader {
             total_buy_cost: 0,
             total_sell_proceeds: 0,
             missed_orders: 0,
+            stale_fills: 0,
+            stale_misses: 0,
+            stale_decision_latency_ticks_sum: 0,
+            stale_arrival_lag_ticks_sum: 0,
             md_queue: VecDeque::with_capacity(256),
             order_queue: VecDeque::with_capacity(64),
         }
@@ -66,19 +74,21 @@ impl Trader {
             if self.order_queue.is_empty() {
                 if let Some(action) = self.strategy.decide(&l1, self.position, current_tick) {
                     let delivery = current_tick + self.config.order_latency;
-                    self.order_queue.push_back((delivery, action));
+                    let decision_latency = current_tick.saturating_sub(l1.tick);
+                    self.order_queue
+                        .push_back((delivery, action, decision_latency));
                 }
             }
         }
     }
 
     /// Return orders that have arrived at the exchange this tick.
-    pub fn drain_arrived_orders(&mut self, current_tick: u64) -> Vec<Action> {
+    pub fn drain_arrived_orders(&mut self, current_tick: u64) -> Vec<(Action, u64)> {
         let mut orders = Vec::new();
-        while let Some(&(delivery, _)) = self.order_queue.front() {
+        while let Some(&(delivery, _, _)) = self.order_queue.front() {
             if delivery <= current_tick {
-                let (_, action) = self.order_queue.pop_front().unwrap();
-                orders.push(action);
+                let (_, action, decision_latency) = self.order_queue.pop_front().unwrap();
+                orders.push((action, decision_latency));
             } else {
                 break;
             }
@@ -88,6 +98,21 @@ impl Trader {
 
     pub fn record_miss(&mut self) {
         self.missed_orders += 1;
+    }
+
+    pub fn record_stale_outcome(
+        &mut self,
+        filled: bool,
+        decision_latency_ticks: u64,
+        arrival_lag_ticks: u64,
+    ) {
+        if filled {
+            self.stale_fills += 1;
+        } else {
+            self.stale_misses += 1;
+        }
+        self.stale_decision_latency_ticks_sum += decision_latency_ticks;
+        self.stale_arrival_lag_ticks_sum += arrival_lag_ticks;
     }
 
     pub fn apply_fills(&mut self, fills: &[Fill], side: Side) {

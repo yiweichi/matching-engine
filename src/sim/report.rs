@@ -5,6 +5,7 @@ pub struct SimResult {
     pub ticks: u64,
     pub seed: u64,
     pub num_events: u64,
+    pub expired_stale_quotes: u64,
     pub fast_md_latency: u64,
     pub fast_order_latency: u64,
     pub slow_md_latency: u64,
@@ -23,6 +24,10 @@ pub struct SimResult {
     pub fast_avg_buy: f64,
     pub fast_avg_sell: f64,
     pub fast_missed_orders: u64,
+    pub fast_stale_fills: u64,
+    pub fast_stale_misses: u64,
+    pub fast_stale_decision_latency_ticks_sum: u64,
+    pub fast_stale_arrival_lag_ticks_sum: u64,
 
     pub slow_trades: u64,
     pub slow_buys: u64,
@@ -33,6 +38,10 @@ pub struct SimResult {
     pub slow_avg_buy: f64,
     pub slow_avg_sell: f64,
     pub slow_missed_orders: u64,
+    pub slow_stale_fills: u64,
+    pub slow_stale_misses: u64,
+    pub slow_stale_decision_latency_ticks_sum: u64,
+    pub slow_stale_arrival_lag_ticks_sum: u64,
 }
 
 impl SimResult {
@@ -72,6 +81,36 @@ impl SimResult {
         let _ = writeln!(s, "  Final reference: {}", fmt_num(self.mark_price));
         let _ = writeln!(s);
 
+        let stale_fills = self.fast_stale_fills + self.slow_stale_fills;
+        let stale_misses = self.fast_stale_misses + self.slow_stale_misses;
+        let stale_attempts = stale_fills + stale_misses;
+        let capture_rate = if self.num_events > 0 {
+            100.0 * stale_fills as f64 / self.num_events as f64
+        } else {
+            0.0
+        };
+        let avg_decision_latency = avg_u64(
+            self.fast_stale_decision_latency_ticks_sum + self.slow_stale_decision_latency_ticks_sum,
+            stale_attempts,
+        );
+        let avg_arrival_lag = avg_u64(
+            self.fast_stale_arrival_lag_ticks_sum + self.slow_stale_arrival_lag_ticks_sum,
+            stale_attempts,
+        );
+        let _ = writeln!(s, "--- Stale Quote Summary ---");
+        let _ = writeln!(s, "  Stale events:          {}", fmt_num(self.num_events));
+        let _ = writeln!(s, "  Stale fills:           {}", stale_fills);
+        let _ = writeln!(s, "  Stale misses:          {}", stale_misses);
+        let _ = writeln!(s, "  Expired stale quotes:  {}", self.expired_stale_quotes);
+        let _ = writeln!(s, "  Stale capture rate:    {:.1}%", capture_rate);
+        let _ = writeln!(
+            s,
+            "  Avg decision latency:  {:.2} ticks",
+            avg_decision_latency
+        );
+        let _ = writeln!(s, "  Avg order arrival lag: {:.2} ticks", avg_arrival_lag);
+        let _ = writeln!(s);
+
         self.format_trader(
             &mut s,
             "Trader A (fast)",
@@ -84,6 +123,10 @@ impl SimResult {
             self.fast_cash,
             self.fast_pnl,
             self.fast_missed_orders,
+            self.fast_stale_fills,
+            self.fast_stale_misses,
+            self.fast_stale_decision_latency_ticks_sum,
+            self.fast_stale_arrival_lag_ticks_sum,
         );
         let _ = writeln!(s);
         self.format_trader(
@@ -98,6 +141,10 @@ impl SimResult {
             self.slow_cash,
             self.slow_pnl,
             self.slow_missed_orders,
+            self.slow_stale_fills,
+            self.slow_stale_misses,
+            self.slow_stale_decision_latency_ticks_sum,
+            self.slow_stale_arrival_lag_ticks_sum,
         );
         let _ = writeln!(s);
 
@@ -157,7 +204,17 @@ impl SimResult {
         cash: i64,
         pnl: i64,
         missed_orders: u64,
+        stale_fills: u64,
+        stale_misses: u64,
+        stale_decision_latency_ticks_sum: u64,
+        stale_arrival_lag_ticks_sum: u64,
     ) {
+        let stale_attempts = stale_fills + stale_misses;
+        let capture_rate = if self.num_events > 0 {
+            100.0 * stale_fills as f64 / self.num_events as f64
+        } else {
+            0.0
+        };
         let _ = writeln!(s, "--- {} ---", name);
         let _ = writeln!(
             s,
@@ -165,6 +222,17 @@ impl SimResult {
             trades, buys, sells
         );
         let _ = writeln!(s, "  Missed IOC:      {}", missed_orders);
+        let _ = writeln!(
+            s,
+            "  Stale:           {} fills, {} misses, {:.1}% capture",
+            stale_fills, stale_misses, capture_rate
+        );
+        let _ = writeln!(
+            s,
+            "  Stale latency:   {:.2} decision ticks, {:.2} arrival ticks",
+            avg_u64(stale_decision_latency_ticks_sum, stale_attempts),
+            avg_u64(stale_arrival_lag_ticks_sum, stale_attempts)
+        );
         if buys > 0 {
             let _ = writeln!(s, "  Avg buy price:   {:.1}", avg_buy);
         }
@@ -246,4 +314,12 @@ fn fmt_num(n: u64) -> String {
         result.push(c);
     }
     result.chars().rev().collect()
+}
+
+fn avg_u64(sum: u64, count: u64) -> f64 {
+    if count == 0 {
+        0.0
+    } else {
+        sum as f64 / count as f64
+    }
 }

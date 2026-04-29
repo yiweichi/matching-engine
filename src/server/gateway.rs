@@ -10,7 +10,7 @@ use rand::{Rng, SeedableRng};
 
 use super::wire;
 use crate::arg::ServeArgs;
-use crate::sim::exchange::{SimExchange, L1};
+use crate::sim::exchange::{SimExchange, StaleOutcome, L1};
 
 static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
 
@@ -60,6 +60,10 @@ struct Client {
     missed_ioc_sells: u64,
     missed_ioc_buy_gap_sum: u64,
     missed_ioc_sell_gap_sum: u64,
+    stale_fills: u64,
+    stale_misses: u64,
+    stale_decision_latency_ns_sum: u128,
+    stale_arrival_lag_ticks_sum: u64,
     disconnected: bool,
 }
 
@@ -95,6 +99,10 @@ impl Client {
             missed_ioc_sells: 0,
             missed_ioc_buy_gap_sum: 0,
             missed_ioc_sell_gap_sum: 0,
+            stale_fills: 0,
+            stale_misses: 0,
+            stale_decision_latency_ns_sum: 0,
+            stale_arrival_lag_ticks_sum: 0,
             disconnected: false,
         }
     }
@@ -146,6 +154,16 @@ impl Client {
                 self.cash += notional;
             }
         }
+    }
+
+    fn apply_stale_outcome(&mut self, outcome: StaleOutcome) {
+        if outcome.filled {
+            self.stale_fills += 1;
+        } else {
+            self.stale_misses += 1;
+        }
+        self.stale_decision_latency_ns_sum += outcome.decision_latency_ns as u128;
+        self.stale_arrival_lag_ticks_sum += outcome.arrival_lag_ticks;
     }
 }
 
@@ -244,7 +262,7 @@ pub fn run_server(args: &ServeArgs) {
         total,
         ticks_run as f64 / total.as_secs_f64()
     );
-    print_client_report(&finished_clients);
+    print_client_report(&finished_clients, &exchange);
 }
 
 fn send_md_snapshot(udp: &UdpSocket, md_addr: SocketAddr, seq: &mut u32, l1: &L1) {
@@ -384,9 +402,12 @@ fn process_new_order(exchange: &mut SimExchange, order: &PendingOrder, clients: 
 
     clients[order.client_idx].orders_total += 1;
 
-    let fills = match msg.order_type {
-        wire::ORDER_TYPE_IOC_LIMIT => exchange.submit_ioc_limit(side, price, qty),
-        wire::ORDER_TYPE_MARKET => exchange.submit_market(side, qty),
+    let (fills, stale_outcome) = match msg.order_type {
+        wire::ORDER_TYPE_IOC_LIMIT => {
+            let result = exchange.submit_ioc_limit_at(side, price, qty, order.recv_ns);
+            (result.fills, result.stale_outcome)
+        }
+        wire::ORDER_TYPE_MARKET => (exchange.submit_market(side, qty), None),
         _ => {
             let client = &mut clients[order.client_idx];
             client.orders_rejected += 1;
@@ -410,6 +431,9 @@ fn process_new_order(exchange: &mut SimExchange, order: &PendingOrder, clients: 
 
     let client = &mut clients[order.client_idx];
     client.orders_accepted += 1;
+    if let Some(outcome) = stale_outcome {
+        client.apply_stale_outcome(outcome);
+    }
     if fills.is_empty() && msg.order_type == wire::ORDER_TYPE_IOC_LIMIT {
         let l1 = exchange.debug_l1();
         let gap = match side {
@@ -537,8 +561,44 @@ fn liquidate_client(exchange: &mut SimExchange, client: &mut Client) {
     client.liquidation_pnl += liquidation_cash_delta as f64 - pre_liq_mark_pnl;
 }
 
-fn print_client_report(clients: &[Client]) {
+fn print_client_report(clients: &[Client], exchange: &SimExchange) {
     eprintln!("\n=== Exchange Client Report ===");
+    let stale_fills: u64 = clients.iter().map(|client| client.stale_fills).sum();
+    let stale_misses: u64 = clients.iter().map(|client| client.stale_misses).sum();
+    let stale_attempts = stale_fills + stale_misses;
+    let stale_capture_rate = if exchange.stale_events() > 0 {
+        100.0 * stale_fills as f64 / exchange.stale_events() as f64
+    } else {
+        0.0
+    };
+    let stale_latency_sum: u128 = clients
+        .iter()
+        .map(|client| client.stale_decision_latency_ns_sum)
+        .sum();
+    let stale_lag_sum: u64 = clients
+        .iter()
+        .map(|client| client.stale_arrival_lag_ticks_sum)
+        .sum();
+    let avg_decision_latency_us = if stale_attempts > 0 {
+        stale_latency_sum as f64 / stale_attempts as f64 / 1_000.0
+    } else {
+        0.0
+    };
+    let avg_arrival_lag_ticks = if stale_attempts > 0 {
+        stale_lag_sum as f64 / stale_attempts as f64
+    } else {
+        0.0
+    };
+    eprintln!(
+        "Stale: events {}, fills {}, misses {}, expired {}, capture {:.1}%, avg decision latency {:.2} us, avg arrival lag {:.2} ticks",
+        exchange.stale_events(),
+        stale_fills,
+        stale_misses,
+        exchange.expired_stale_quotes(),
+        stale_capture_rate,
+        avg_decision_latency_us,
+        avg_arrival_lag_ticks
+    );
     for client in clients {
         let hit_rate = if client.orders_accepted > 0 {
             100.0 * client.orders_filled as f64 / client.orders_accepted as f64
@@ -567,6 +627,22 @@ fn print_client_report(clients: &[Client]) {
         } else {
             0.0
         };
+        let stale_attempts = client.stale_fills + client.stale_misses;
+        let stale_capture_rate = if exchange.stale_events() > 0 {
+            100.0 * client.stale_fills as f64 / exchange.stale_events() as f64
+        } else {
+            0.0
+        };
+        let avg_decision_latency_us = if stale_attempts > 0 {
+            client.stale_decision_latency_ns_sum as f64 / stale_attempts as f64 / 1_000.0
+        } else {
+            0.0
+        };
+        let avg_arrival_lag_ticks = if stale_attempts > 0 {
+            client.stale_arrival_lag_ticks_sum as f64 / stale_attempts as f64
+        } else {
+            0.0
+        };
         eprintln!("--- Client {} ---", client.id);
         eprintln!(
             "  Orders:      {} total, {} accepted, {} filled, {} missed IOC, {} rejected ({:.1}% hit)",
@@ -583,6 +659,14 @@ fn print_client_report(clients: &[Client]) {
             missed_buy_avg_gap,
             client.missed_ioc_sells,
             missed_sell_avg_gap
+        );
+        eprintln!(
+            "  Stale:       {} fills, {} misses, capture {:.1}%, avg decision latency {:.2} us, avg arrival lag {:.2} ticks",
+            client.stale_fills,
+            client.stale_misses,
+            stale_capture_rate,
+            avg_decision_latency_us,
+            avg_arrival_lag_ticks
         );
         eprintln!(
             "  Fills:       {} events, {} qty ({} buys / {} buy qty, {} sells / {} sell qty)",
