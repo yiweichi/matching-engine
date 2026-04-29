@@ -180,11 +180,13 @@ pub fn run_server(args: &ServeArgs) {
 
     let mut exchange = SimExchange::new(args.seed);
 
-    let udp = UdpSocket::bind("0.0.0.0:0").expect("failed to bind UDP sender");
-    udp.set_multicast_loop_v4(true)
-        .expect("failed to enable multicast loopback");
-    udp.set_multicast_ttl_v4(1)
-        .expect("failed to set multicast ttl");
+    let ref_udp = make_udp_sender();
+    let md_udp = make_udp_sender();
+    let ref_group: Ipv4Addr = args
+        .ref_group
+        .parse()
+        .expect("invalid reference multicast group");
+    let ref_addr = SocketAddr::from((ref_group, args.ref_port));
     let md_group: Ipv4Addr = args.md_group.parse().expect("invalid md multicast group");
     let md_addr = SocketAddr::from((md_group, args.md_port));
 
@@ -197,15 +199,16 @@ pub fn run_server(args: &ServeArgs) {
     let mut clients: Vec<Client> = Vec::new();
     let mut finished_clients: Vec<Client> = Vec::new();
     let mut next_client_id = 1u64;
-    let mut seq: u32 = 0;
+    let mut ref_seq: u32 = 0;
+    let mut md_seq: u32 = 0;
     let mut tie_rng = SmallRng::seed_from_u64(args.seed ^ 0x9e37_79b9_7f4a_7c15);
 
     let tick_ns = 1_000_000_000u64 / args.tick_rate;
     let tick_interval = Duration::from_nanos(tick_ns);
 
     eprintln!(
-        "[exchange] MD UDP {}:{}, Orders TCP :{}",
-        args.md_group, args.md_port, args.order_port
+        "[exchange] REF UDP {}:{}, MD UDP {}:{}, Orders TCP :{}",
+        args.ref_group, args.ref_port, args.md_group, args.md_port, args.order_port
     );
     eprintln!(
         "[exchange] tick_rate={}/s  ticks={}  seed={}",
@@ -226,7 +229,8 @@ pub fn run_server(args: &ServeArgs) {
         let l1: L1 = exchange.step();
 
         if l1.valid() {
-            send_md_snapshot(&udp, md_addr, &mut seq, &l1);
+            send_reference_snapshot(&ref_udp, ref_addr, &mut ref_seq, &l1);
+            send_target_md_snapshot(&md_udp, md_addr, &mut md_seq, &l1);
         }
 
         accept_clients(&tcp_listener, &mut clients, &mut next_client_id);
@@ -265,7 +269,16 @@ pub fn run_server(args: &ServeArgs) {
     print_client_report(&finished_clients, &exchange);
 }
 
-fn send_md_snapshot(udp: &UdpSocket, md_addr: SocketAddr, seq: &mut u32, l1: &L1) {
+fn make_udp_sender() -> UdpSocket {
+    let udp = UdpSocket::bind("0.0.0.0:0").expect("failed to bind UDP sender");
+    udp.set_multicast_loop_v4(true)
+        .expect("failed to enable multicast loopback");
+    udp.set_multicast_ttl_v4(1)
+        .expect("failed to set multicast ttl");
+    udp
+}
+
+fn send_reference_snapshot(udp: &UdpSocket, ref_addr: SocketAddr, seq: &mut u32, l1: &L1) {
     if !l1.valid() {
         return;
     }
@@ -283,7 +296,13 @@ fn send_md_snapshot(udp: &UdpSocket, md_addr: SocketAddr, seq: &mut u32, l1: &L1
         _pad: [0; 8],
     };
     *seq = (*seq).wrapping_add(1);
-    let _ = udp.send_to(unsafe { wire::as_bytes(&reference) }, md_addr);
+    let _ = udp.send_to(unsafe { wire::as_bytes(&reference) }, ref_addr);
+}
+
+fn send_target_md_snapshot(udp: &UdpSocket, md_addr: SocketAddr, seq: &mut u32, l1: &L1) {
+    if !l1.valid() {
+        return;
+    }
 
     let quote = wire::WireMdQuote {
         header: wire::WireMdHeader {

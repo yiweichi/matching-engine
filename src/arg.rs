@@ -134,16 +134,30 @@ pub struct ServeArgs {
     #[arg(
         long,
         default_value_t = 12345,
-        help = "UDP port for market data broadcast"
+        help = "UDP port for target market data broadcast"
     )]
     pub md_port: u16,
 
     #[arg(
         long,
         default_value = "239.1.1.1",
-        help = "IPv4 multicast group for market data broadcast"
+        help = "IPv4 multicast group for target market data broadcast"
     )]
     pub md_group: String,
+
+    #[arg(
+        long,
+        default_value_t = 12347,
+        help = "UDP port for reference price broadcast"
+    )]
+    pub ref_port: u16,
+
+    #[arg(
+        long,
+        default_value = "239.1.1.2",
+        help = "IPv4 multicast group for reference price broadcast"
+    )]
+    pub ref_group: String,
 
     #[arg(long, default_value_t = 12346, help = "TCP port for order gateway")]
     pub order_port: u16,
