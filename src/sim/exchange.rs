@@ -1,6 +1,7 @@
 use matching_engine::{Fill, Order, OrderBook, OrderId, OrderType, Price, Qty, Side};
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const INITIAL_MID: Price = 10_000;
 const HALF_SPREAD: Price = 1;
@@ -19,6 +20,28 @@ pub struct L1 {
     pub ask: Price,
     pub bid_qty: Qty,
     pub ask_qty: Qty,
+}
+
+#[derive(Debug, Clone)]
+pub struct IocResult {
+    pub fills: Vec<Fill>,
+    pub stale_outcome: Option<StaleOutcome>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct StaleOutcome {
+    pub filled: bool,
+    pub decision_latency_ns: u64,
+    pub arrival_lag_ticks: u64,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct StaleQuote {
+    side: Side,
+    price: Price,
+    event_tick: u64,
+    event_ns: u64,
+    active: bool,
 }
 
 impl L1 {
@@ -45,6 +68,8 @@ pub struct SimExchange {
     price_low: Price,
     price_high: Price,
     pub num_events: u64,
+    expired_stale_quotes: u64,
+    stale_quote: Option<StaleQuote>,
     fills_buf: Vec<Fill>,
 }
 
@@ -65,6 +90,8 @@ impl SimExchange {
             price_low: INITIAL_MID,
             price_high: INITIAL_MID,
             num_events: 0,
+            expired_stale_quotes: 0,
+            stale_quote: None,
             fills_buf: Vec::with_capacity(64),
         };
         ex.rebuild_book(INITIAL_MID);
@@ -81,7 +108,14 @@ impl SimExchange {
         snap
     }
 
-    pub fn submit_ioc_limit(&mut self, side: Side, price: Price, qty: Qty) -> Vec<Fill> {
+    pub fn submit_ioc_limit_at(
+        &mut self,
+        side: Side,
+        price: Price,
+        qty: Qty,
+        recv_ns: u64,
+    ) -> IocResult {
+        let stale_attempt = self.stale_attempt(side, price, recv_ns);
         let id = self.alloc_id();
         self.fills_buf.clear();
         self.book.add_order(
@@ -95,7 +129,21 @@ impl SimExchange {
             &mut self.fills_buf,
         );
         self.book.cancel(id);
-        self.fills_buf.clone()
+        let fills = self.fills_buf.clone();
+        let stale_outcome = stale_attempt.map(|mut outcome| {
+            if self.stale_fill_matched(&fills) {
+                outcome.filled = true;
+                if let Some(stale) = &mut self.stale_quote {
+                    stale.active = false;
+                }
+            }
+            outcome
+        });
+
+        IocResult {
+            fills,
+            stale_outcome,
+        }
     }
 
     #[allow(dead_code)]
@@ -135,6 +183,14 @@ impl SimExchange {
         self.price_high
     }
 
+    pub fn stale_events(&self) -> u64 {
+        self.num_events
+    }
+
+    pub fn expired_stale_quotes(&self) -> u64 {
+        self.expired_stale_quotes
+    }
+
     fn advance_reference(&mut self) {
         if self.ticks_to_next_event > 0 {
             self.ticks_to_next_event -= 1;
@@ -170,6 +226,12 @@ impl SimExchange {
             return;
         }
 
+        if let Some(stale) = &mut self.stale_quote {
+            if stale.active {
+                self.expired_stale_quotes += 1;
+                stale.active = false;
+            }
+        }
         self.target_mid = self.reference_mid;
         self.rebuild_book(self.target_mid);
     }
@@ -196,19 +258,54 @@ impl SimExchange {
         match jump_side {
             Side::Buy => {
                 self.place_side(Side::Buy, old_mid);
-                self.place_liquidity(Side::Sell, old_mid + HALF_SPREAD, TOP_LEVEL_QTY);
+                let stale_price = old_mid + HALF_SPREAD;
+                self.place_liquidity(Side::Sell, stale_price, TOP_LEVEL_QTY);
                 self.place_side(Side::Sell, new_mid);
+                self.stale_quote = Some(StaleQuote {
+                    side: Side::Buy,
+                    price: stale_price,
+                    event_tick: self.tick,
+                    event_ns: now_ns(),
+                    active: true,
+                });
             }
             Side::Sell => {
                 self.place_side(Side::Sell, old_mid);
-                self.place_liquidity(
-                    Side::Buy,
-                    old_mid.saturating_sub(HALF_SPREAD).max(1),
-                    TOP_LEVEL_QTY,
-                );
+                let stale_price = old_mid.saturating_sub(HALF_SPREAD).max(1);
+                self.place_liquidity(Side::Buy, stale_price, TOP_LEVEL_QTY);
                 self.place_side(Side::Buy, new_mid);
+                self.stale_quote = Some(StaleQuote {
+                    side: Side::Sell,
+                    price: stale_price,
+                    event_tick: self.tick,
+                    event_ns: now_ns(),
+                    active: true,
+                });
             }
         }
+    }
+
+    fn stale_attempt(&self, side: Side, price: Price, recv_ns: u64) -> Option<StaleOutcome> {
+        let stale = self.stale_quote?;
+        let price_crosses = match side {
+            Side::Buy => price >= stale.price,
+            Side::Sell => price <= stale.price,
+        };
+        if side != stale.side || !price_crosses {
+            return None;
+        }
+        Some(StaleOutcome {
+            filled: false,
+            decision_latency_ns: recv_ns.saturating_sub(stale.event_ns),
+            arrival_lag_ticks: self.tick.saturating_sub(stale.event_tick),
+        })
+    }
+
+    fn stale_fill_matched(&self, fills: &[Fill]) -> bool {
+        let Some(stale) = self.stale_quote else {
+            return false;
+        };
+        stale.active && fills.iter().any(|fill| fill.price == stale.price)
     }
 
     fn place_side(&mut self, side: Side, mid: Price) {
@@ -264,4 +361,11 @@ impl SimExchange {
         self.next_id += 1;
         id
     }
+}
+
+fn now_ns() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos() as u64
 }

@@ -75,6 +75,7 @@ pub fn run(cfg: &SimConfig) -> SimResult {
         ticks: cfg.ticks,
         seed: cfg.seed,
         num_events: exchange.num_events,
+        expired_stale_quotes: exchange.expired_stale_quotes(),
         fast_md_latency: cfg.fast_md_latency,
         fast_order_latency: cfg.fast_order_latency,
         slow_md_latency: cfg.slow_md_latency,
@@ -92,6 +93,10 @@ pub fn run(cfg: &SimConfig) -> SimResult {
         fast_avg_buy: fast.avg_buy_price(),
         fast_avg_sell: fast.avg_sell_price(),
         fast_missed_orders: fast.missed_orders,
+        fast_stale_fills: fast.stale_fills,
+        fast_stale_misses: fast.stale_misses,
+        fast_stale_decision_latency_ticks_sum: fast.stale_decision_latency_ticks_sum,
+        fast_stale_arrival_lag_ticks_sum: fast.stale_arrival_lag_ticks_sum,
         slow_trades: slow.total_trades(),
         slow_buys: slow.num_buys,
         slow_sells: slow.num_sells,
@@ -101,12 +106,25 @@ pub fn run(cfg: &SimConfig) -> SimResult {
         slow_avg_buy: slow.avg_buy_price(),
         slow_avg_sell: slow.avg_sell_price(),
         slow_missed_orders: slow.missed_orders,
+        slow_stale_fills: slow.stale_fills,
+        slow_stale_misses: slow.stale_misses,
+        slow_stale_decision_latency_ticks_sum: slow.stale_decision_latency_ticks_sum,
+        slow_stale_arrival_lag_ticks_sum: slow.stale_arrival_lag_ticks_sum,
     }
 }
 
-fn execute_orders(exchange: &mut SimExchange, trader: &mut Trader, orders: Vec<Action>) {
-    for action in orders {
-        let fills = exchange.submit_ioc_limit(action.side(), action.limit_price(), action.qty());
+fn execute_orders(exchange: &mut SimExchange, trader: &mut Trader, orders: Vec<(Action, u64)>) {
+    for (action, decision_latency_ticks) in orders {
+        let result =
+            exchange.submit_ioc_limit_at(action.side(), action.limit_price(), action.qty(), 0);
+        let fills = result.fills;
+        if let Some(outcome) = result.stale_outcome {
+            trader.record_stale_outcome(
+                outcome.filled,
+                decision_latency_ticks,
+                outcome.arrival_lag_ticks,
+            );
+        }
         if fills.is_empty() {
             trader.record_miss();
         } else {
