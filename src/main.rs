@@ -247,7 +247,7 @@ fn run_sim(args: &SimArgs) {
         slow_md_latency: args.slow_md_latency,
         slow_order_latency: args.slow_order_latency,
         max_position: args.max_position,
-        seed: args.seed,
+        seed: 0,
     };
 
     let t0 = Instant::now();

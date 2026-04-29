@@ -1,7 +1,4 @@
 use matching_engine::{Fill, Order, OrderBook, OrderId, OrderType, Price, Qty, Side};
-use rand::rngs::SmallRng;
-use rand::SeedableRng;
-
 const INITIAL_MID: Price = 10_000;
 const HALF_SPREAD: Price = 1;
 const LEVELS: Price = 50;
@@ -55,7 +52,6 @@ impl L1 {
 pub struct SimExchange {
     book: OrderBook,
     next_id: OrderId,
-    _rng: SmallRng,
     tick: u64,
     reference_mid: Price,
     target_mid: Price,
@@ -71,12 +67,10 @@ pub struct SimExchange {
 }
 
 impl SimExchange {
-    pub fn new(seed: u64) -> Self {
-        let _rng = SmallRng::seed_from_u64(seed);
+    pub fn new() -> Self {
         let mut ex = Self {
             book: OrderBook::with_capacity(200_000),
             next_id: 1_000_000,
-            _rng,
             tick: 0,
             reference_mid: INITIAL_MID,
             target_mid: INITIAL_MID,

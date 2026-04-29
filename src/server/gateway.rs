@@ -14,6 +14,7 @@ use crate::arg::ServeArgs;
 use crate::sim::exchange::{SimExchange, StaleOutcome, L1};
 
 static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
+const TIE_BREAKER_SEED: u64 = 0x9e37_79b9_7f4a_7c15;
 
 extern "C" fn handle_shutdown_signal(_signal: libc::c_int) {
     SHUTDOWN_REQUESTED.store(true, Ordering::SeqCst);
@@ -175,7 +176,7 @@ struct PendingOrder {
 pub fn run_server(args: &ServeArgs) {
     install_shutdown_handlers();
 
-    let mut exchange = SimExchange::new(args.seed);
+    let mut exchange = SimExchange::new();
 
     let ref_udp = make_udp_sender();
     let md_udp = make_udp_sender();
@@ -198,7 +199,7 @@ pub fn run_server(args: &ServeArgs) {
     let mut next_client_id = 1u64;
     let mut ref_seq: u32 = 0;
     let mut md_seq: u32 = 0;
-    let mut tie_rng = SmallRng::seed_from_u64(args.seed ^ 0x9e37_79b9_7f4a_7c15);
+    let mut tie_rng = SmallRng::seed_from_u64(TIE_BREAKER_SEED);
 
     let tick_ns = 1_000_000_000u64 / args.tick_rate;
     let tick_interval = Duration::from_nanos(tick_ns);
@@ -208,8 +209,8 @@ pub fn run_server(args: &ServeArgs) {
         args.ref_group, args.ref_port, args.md_group, args.md_port, args.order_port
     );
     eprintln!(
-        "[exchange] tick_rate={}/s  ticks={}  seed={}",
-        args.tick_rate, args.ticks, args.seed
+        "[exchange] tick_rate={}/s  ticks={}",
+        args.tick_rate, args.ticks
     );
     eprintln!(
         "[exchange] accepting multiple HFT clients on TCP :{}...",
