@@ -247,6 +247,11 @@ pub fn run_server(args: &ServeArgs) {
         let elapsed = tick_start.elapsed();
         if elapsed < tick_interval {
             std::thread::sleep(tick_interval - elapsed);
+        } else if args.debug_tick_overrun {
+            eprintln!(
+                "[md_debug] exceeded tick interval: {:.2?} > {:.2?} (tick={})",
+                elapsed, tick_interval, l1.tick
+            );
         }
     }
 
