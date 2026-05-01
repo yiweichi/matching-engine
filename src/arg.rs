@@ -164,4 +164,11 @@ pub struct ServeArgs {
 
     #[arg(long, default_value_t = 0, help = "Total ticks to run (0 = unlimited)")]
     pub ticks: u64,
+
+    #[arg(
+        long,
+        default_value_t = false,
+        help = "Debug: log when one exchange loop exceeds the configured tick interval"
+    )]
+    pub debug_tick_overrun: bool,
 }
