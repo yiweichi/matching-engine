@@ -4,8 +4,8 @@ const HALF_SPREAD: Price = 1;
 const LEVELS: Price = 50;
 const TOP_LEVEL_QTY: Qty = 1;
 const DEEP_LEVEL_QTY: Qty = 250;
-const REFERENCE_EVENT_INTERVAL: u64 = 300;
-const REPRICE_DELAY: u64 = 20;
+const REFERENCE_EVENT_INTERVAL: u64 = 50;
+const REPRICE_DELAY: u64 = 10;
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy)]
@@ -26,12 +26,16 @@ pub struct IocResult {
 
 #[derive(Debug, Clone, Copy)]
 pub struct StaleOutcome {
+    pub event_id: u64,
+    pub side: Side,
+    pub price: Price,
     pub filled: bool,
     pub arrival_lag_ticks: u64,
 }
 
 #[derive(Debug, Clone, Copy)]
 struct StaleQuote {
+    event_id: u64,
     side: Side,
     price: Price,
     event_tick: u64,
@@ -64,6 +68,7 @@ pub struct SimExchange {
     expired_stale_quotes: u64,
     stale_quote: Option<StaleQuote>,
     fills_buf: Vec<Fill>,
+    debug_stale_quotes: bool,
 }
 
 impl SimExchange {
@@ -75,7 +80,7 @@ impl SimExchange {
             reference_mid: INITIAL_MID,
             target_mid: INITIAL_MID,
             last_reference_jump_tick: 0,
-            ticks_to_next_event: REFERENCE_EVENT_INTERVAL,
+            ticks_to_next_event: REFERENCE_EVENT_INTERVAL - 1,
             next_event_side: Side::Buy,
             price_low: INITIAL_MID,
             price_high: INITIAL_MID,
@@ -83,9 +88,18 @@ impl SimExchange {
             expired_stale_quotes: 0,
             stale_quote: None,
             fills_buf: Vec::with_capacity(64),
+            debug_stale_quotes: false,
         };
         ex.rebuild_book(INITIAL_MID);
         ex
+    }
+
+    pub fn set_debug_stale_quotes(&mut self, enabled: bool) {
+        self.debug_stale_quotes = enabled;
+    }
+
+    pub fn debug_stale_quotes_enabled(&self) -> bool {
+        self.debug_stale_quotes
     }
 
     pub fn step(&mut self) -> L1 {
@@ -120,6 +134,26 @@ impl SimExchange {
                 if let Some(stale) = &mut self.stale_quote {
                     stale.active = false;
                 }
+                if self.debug_stale_quotes {
+                    eprintln!(
+                        "[stale] event {} filled tick={} side={:?} price={} lag={} ticks",
+                        outcome.event_id,
+                        self.tick,
+                        outcome.side,
+                        outcome.price,
+                        outcome.arrival_lag_ticks
+                    );
+                }
+            } else if self.debug_stale_quotes {
+                eprintln!(
+                    "-------------[stale] event {} not_filled tick={} side={:?} price={} lag={} ticks fills={}",
+                    outcome.event_id,
+                    self.tick,
+                    outcome.side,
+                    outcome.price,
+                    outcome.arrival_lag_ticks,
+                    fills.len()
+                );
             }
             outcome
         });
@@ -197,7 +231,7 @@ impl SimExchange {
         }
 
         self.last_reference_jump_tick = self.tick;
-        self.ticks_to_next_event = REFERENCE_EVENT_INTERVAL;
+        self.ticks_to_next_event = REFERENCE_EVENT_INTERVAL - 1;
         self.num_events += 1;
         self.rebuild_book_with_stale_quote(old_mid, self.reference_mid, jump_side);
     }
@@ -206,7 +240,7 @@ impl SimExchange {
         if self.target_mid == self.reference_mid {
             return;
         }
-        if self.tick < self.last_reference_jump_tick + REPRICE_DELAY {
+        if self.tick < self.last_reference_jump_tick + REPRICE_DELAY - 1 {
             return;
         }
 
@@ -214,6 +248,16 @@ impl SimExchange {
             if stale.active {
                 self.expired_stale_quotes += 1;
                 stale.active = false;
+                if self.debug_stale_quotes {
+                    eprintln!(
+                        "[stale] event {} expired tick={} side={:?} price={} age={} ticks",
+                        stale.event_id,
+                        self.tick,
+                        stale.side,
+                        stale.price,
+                        self.tick.saturating_sub(stale.event_tick)
+                    );
+                }
             }
         }
         self.target_mid = self.reference_mid;
@@ -238,6 +282,7 @@ impl SimExchange {
 
     fn rebuild_book_with_stale_quote(&mut self, old_mid: Price, new_mid: Price, jump_side: Side) {
         self.book = OrderBook::with_capacity(200_000);
+        let event_id = self.num_events;
 
         match jump_side {
             Side::Buy => {
@@ -246,6 +291,7 @@ impl SimExchange {
                 self.place_liquidity(Side::Sell, stale_price, TOP_LEVEL_QTY);
                 self.place_side(Side::Sell, new_mid);
                 self.stale_quote = Some(StaleQuote {
+                    event_id,
                     side: Side::Buy,
                     price: stale_price,
                     event_tick: self.tick,
@@ -258,6 +304,7 @@ impl SimExchange {
                 self.place_liquidity(Side::Buy, stale_price, TOP_LEVEL_QTY);
                 self.place_side(Side::Buy, new_mid);
                 self.stale_quote = Some(StaleQuote {
+                    event_id,
                     side: Side::Sell,
                     price: stale_price,
                     event_tick: self.tick,
@@ -265,10 +312,28 @@ impl SimExchange {
                 });
             }
         }
+
+        if self.debug_stale_quotes {
+            if let Some(stale) = self.stale_quote {
+                eprintln!(
+                    "[stale] event {} open tick={} side={:?} price={} old_mid={} new_mid={} expires_after={} ticks",
+                    stale.event_id,
+                    stale.event_tick,
+                    stale.side,
+                    stale.price,
+                    old_mid,
+                    new_mid,
+                    REPRICE_DELAY
+                );
+            }
+        }
     }
 
     fn stale_attempt(&self, side: Side, price: Price) -> Option<StaleOutcome> {
         let stale = self.stale_quote?;
+        if !stale.active {
+            return None;
+        }
         let price_crosses = match side {
             Side::Buy => price >= stale.price,
             Side::Sell => price <= stale.price,
@@ -277,6 +342,9 @@ impl SimExchange {
             return None;
         }
         Some(StaleOutcome {
+            event_id: stale.event_id,
+            side: stale.side,
+            price: stale.price,
             filled: false,
             arrival_lag_ticks: self.tick.saturating_sub(stale.event_tick),
         })

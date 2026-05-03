@@ -30,6 +30,7 @@ pub const DEFAULT_INSTRUMENT_ID: u32 = 1;
 #[derive(Clone, Copy)]
 pub struct WireMdHeader {
     pub timestamp_ns: u64,
+    pub exchange_tick: u64,
     pub instrument_id: u32,
     pub sequence_num: u32,
     pub msg_type: u8,
@@ -86,9 +87,9 @@ pub struct WireExecReport {
 // ── Compile-time size assertions ─────────────────────────────────────────────
 
 const _: () = {
-    assert!(std::mem::size_of::<WireMdHeader>() == 24);
-    assert!(std::mem::size_of::<WireMdQuote>() == 48);
-    assert!(std::mem::size_of::<WireMdReference>() == 40);
+    assert!(std::mem::size_of::<WireMdHeader>() == 32);
+    assert!(std::mem::size_of::<WireMdQuote>() == 56);
+    assert!(std::mem::size_of::<WireMdReference>() == 48);
     assert!(std::mem::size_of::<WireOrderMsg>() == 32);
     assert!(std::mem::size_of::<WireExecReport>() == 40);
 };
