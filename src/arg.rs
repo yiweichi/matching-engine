@@ -171,4 +171,11 @@ pub struct ServeArgs {
         help = "Debug: log when one exchange loop exceeds the configured tick interval"
     )]
     pub debug_tick_overrun: bool,
+
+    #[arg(
+        long,
+        default_value_t = false,
+        help = "Debug: log every stale quote opportunity and whether it is filled or expired"
+    )]
+    pub debug_stale_quotes: bool,
 }

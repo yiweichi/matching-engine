@@ -4,7 +4,7 @@ use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream, UdpSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use matching_engine::{Qty, Side};
+use matching_engine::{Fill, Qty, Side};
 use rand::rngs::SmallRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
@@ -177,6 +177,7 @@ pub fn run_server(args: &ServeArgs) {
     install_shutdown_handlers();
 
     let mut exchange = SimExchange::new();
+    exchange.set_debug_stale_quotes(args.debug_stale_quotes);
 
     let ref_udp = make_udp_sender();
     let md_udp = make_udp_sender();
@@ -290,6 +291,7 @@ fn send_reference_snapshot(udp: &UdpSocket, ref_addr: SocketAddr, seq: &mut u32,
     let reference = wire::WireMdReference {
         header: wire::WireMdHeader {
             timestamp_ns: now_ns,
+            exchange_tick: l1.tick,
             instrument_id: wire::DEFAULT_INSTRUMENT_ID,
             sequence_num: *seq,
             msg_type: wire::MD_MSG_REFERENCE,
@@ -310,6 +312,7 @@ fn send_target_md_snapshot(udp: &UdpSocket, md_addr: SocketAddr, seq: &mut u32, 
     let quote = wire::WireMdQuote {
         header: wire::WireMdHeader {
             timestamp_ns: wire::now_ns(),
+            exchange_tick: l1.tick,
             instrument_id: wire::DEFAULT_INSTRUMENT_ID,
             sequence_num: *seq,
             msg_type: wire::MD_MSG_QUOTE,
@@ -453,6 +456,19 @@ fn process_new_order(exchange: &mut SimExchange, order: &PendingOrder, clients: 
         }
     };
 
+    if exchange.debug_stale_quotes_enabled() && !fills.is_empty() {
+        log_exchange_fills(
+            exchange,
+            clients[order.client_idx].id,
+            &msg,
+            side,
+            price,
+            qty,
+            &fills,
+            stale_outcome,
+        );
+    }
+
     let client = &mut clients[order.client_idx];
     client.orders_accepted += 1;
     if let Some(outcome) = stale_outcome {
@@ -538,6 +554,45 @@ fn process_new_order(exchange: &mut SimExchange, order: &PendingOrder, clients: 
                 },
             );
         }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn log_exchange_fills(
+    exchange: &SimExchange,
+    client_id: u64,
+    msg: &wire::WireOrderMsg,
+    side: Side,
+    limit_price: u64,
+    order_qty: Qty,
+    fills: &[Fill],
+    stale_outcome: Option<StaleOutcome>,
+) {
+    let l1 = exchange.debug_l1();
+    let kind = match stale_outcome {
+        Some(outcome) if outcome.filled => "stale_fill",
+        Some(_) => "stale_attempt_other_fill",
+        None => "non_stale_fill",
+    };
+    let stale_event = stale_outcome.map(|outcome| outcome.event_id).unwrap_or(0);
+
+    for fill in fills {
+        eprintln!(
+            "-------------------[trade] kind={} tick={} client={} order={} side={:?} limit={} order_qty={} fill_price={} fill_qty={} stale_event={} ref={} bid={} ask={}",
+            kind,
+            exchange.tick(),
+            client_id,
+            msg.client_order_id,
+            side,
+            limit_price,
+            order_qty,
+            fill.price,
+            fill.qty,
+            stale_event,
+            l1.reference_mid,
+            l1.bid,
+            l1.ask
+        );
     }
 }
 
