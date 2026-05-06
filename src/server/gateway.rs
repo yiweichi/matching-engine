@@ -257,6 +257,7 @@ pub fn run_server(args: &ServeArgs) {
 
     let t0 = Instant::now();
     let mut ticks_run = 0u64;
+    let mut next_tick_deadline = t0;
 
     while !SHUTDOWN_REQUESTED.load(Ordering::Relaxed) && (args.ticks == 0 || ticks_run < args.ticks)
     {
@@ -287,14 +288,19 @@ pub fn run_server(args: &ServeArgs) {
 
         archive_disconnected_clients(&mut exchange, &mut clients, &mut finished_clients);
         ticks_run += 1;
+        next_tick_deadline += tick_interval;
 
         let elapsed = tick_start.elapsed();
-        if elapsed < tick_interval {
-            std::thread::sleep(tick_interval - elapsed);
+        let now = Instant::now();
+        if now < next_tick_deadline {
+            std::thread::sleep(next_tick_deadline - now);
         } else if args.debug_tick_overrun {
             eprintln!(
-                "[md_debug] exceeded tick interval: {:.2?} > {:.2?} (tick={})",
-                elapsed, tick_interval, l1.tick
+                "[md_debug] exceeded tick interval: {:.2?} > {:.2?} (tick={}, behind={:.2?})",
+                elapsed,
+                tick_interval,
+                l1.tick,
+                now.duration_since(next_tick_deadline)
             );
         }
     }
