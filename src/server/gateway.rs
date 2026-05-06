@@ -261,6 +261,9 @@ pub fn run_server(args: &ServeArgs) {
     while !SHUTDOWN_REQUESTED.load(Ordering::Relaxed) && (args.ticks == 0 || ticks_run < args.ticks)
     {
         let tick_start = Instant::now();
+        let has_connected_client = clients.iter().any(|client| !client.disconnected);
+        exchange
+            .set_debug_stale_expiries(args.debug_stale_expire_when_client && has_connected_client);
 
         let l1: L1 = exchange.step();
 

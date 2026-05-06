@@ -192,4 +192,11 @@ pub struct ServeArgs {
         help = "Debug: log every stale quote opportunity and whether it is filled or expired"
     )]
     pub debug_stale_quotes: bool,
+
+    #[arg(
+        long,
+        default_value_t = false,
+        help = "Debug: log stale quote expirations only while at least one client is connected"
+    )]
+    pub debug_stale_expire_when_client: bool,
 }
