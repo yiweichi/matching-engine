@@ -84,6 +84,7 @@ pub struct SimExchange {
     stale_quote: Option<StaleQuote>,
     fills_buf: Vec<Fill>,
     debug_stale_quotes: bool,
+    debug_stale_expiries: bool,
     config: SimExchangeConfig,
 }
 
@@ -111,6 +112,7 @@ impl SimExchange {
             stale_quote: None,
             fills_buf: Vec::with_capacity(64),
             debug_stale_quotes: false,
+            debug_stale_expiries: false,
             config,
         };
         ex.rebuild_book(INITIAL_MID);
@@ -123,6 +125,10 @@ impl SimExchange {
 
     pub fn debug_stale_quotes_enabled(&self) -> bool {
         self.debug_stale_quotes
+    }
+
+    pub fn set_debug_stale_expiries(&mut self, enabled: bool) {
+        self.debug_stale_expiries = enabled;
     }
 
     pub fn step(&mut self) -> L1 {
@@ -271,7 +277,7 @@ impl SimExchange {
             if stale.active {
                 self.expired_stale_quotes += 1;
                 stale.active = false;
-                if self.debug_stale_quotes {
+                if self.debug_stale_quotes || self.debug_stale_expiries {
                     eprintln!(
                         "[stale] event {} expired tick={} side={:?} price={} age={} ticks",
                         stale.event_id,
