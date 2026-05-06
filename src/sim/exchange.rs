@@ -1,11 +1,11 @@
 use matching_engine::{Fill, Order, OrderBook, OrderId, OrderType, Price, Qty, Side};
 const INITIAL_MID: Price = 10_000;
 const HALF_SPREAD: Price = 1;
-const LEVELS: Price = 50;
+const LEVELS: Price = 8;
 const TOP_LEVEL_QTY: Qty = 1;
 const DEEP_LEVEL_QTY: Qty = 250;
-const REFERENCE_EVENT_INTERVAL: u64 = 50;
-const REPRICE_DELAY: u64 = 10;
+pub const DEFAULT_REFERENCE_EVENT_INTERVAL: u64 = 50;
+pub const DEFAULT_REPRICE_DELAY: u64 = 10;
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy)]
@@ -42,6 +42,21 @@ struct StaleQuote {
     active: bool,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct SimExchangeConfig {
+    pub reference_event_interval: u64,
+    pub reprice_delay: u64,
+}
+
+impl Default for SimExchangeConfig {
+    fn default() -> Self {
+        Self {
+            reference_event_interval: DEFAULT_REFERENCE_EVENT_INTERVAL,
+            reprice_delay: DEFAULT_REPRICE_DELAY,
+        }
+    }
+}
+
 impl L1 {
     pub fn valid(&self) -> bool {
         self.bid > 0 && self.ask > 0 && self.ask > self.bid
@@ -69,18 +84,25 @@ pub struct SimExchange {
     stale_quote: Option<StaleQuote>,
     fills_buf: Vec<Fill>,
     debug_stale_quotes: bool,
+    config: SimExchangeConfig,
 }
 
 impl SimExchange {
     pub fn new() -> Self {
+        Self::with_config(SimExchangeConfig::default())
+    }
+
+    pub fn with_config(config: SimExchangeConfig) -> Self {
+        assert!(config.reference_event_interval > 0);
+        assert!(config.reprice_delay > 0);
         let mut ex = Self {
-            book: OrderBook::with_capacity(200_000),
+            book: OrderBook::with_capacity(2_000),
             next_id: 1_000_000,
             tick: 0,
             reference_mid: INITIAL_MID,
             target_mid: INITIAL_MID,
             last_reference_jump_tick: 0,
-            ticks_to_next_event: REFERENCE_EVENT_INTERVAL - 1,
+            ticks_to_next_event: config.reference_event_interval - 1,
             next_event_side: Side::Buy,
             price_low: INITIAL_MID,
             price_high: INITIAL_MID,
@@ -89,6 +111,7 @@ impl SimExchange {
             stale_quote: None,
             fills_buf: Vec::with_capacity(64),
             debug_stale_quotes: false,
+            config,
         };
         ex.rebuild_book(INITIAL_MID);
         ex
@@ -231,7 +254,7 @@ impl SimExchange {
         }
 
         self.last_reference_jump_tick = self.tick;
-        self.ticks_to_next_event = REFERENCE_EVENT_INTERVAL - 1;
+        self.ticks_to_next_event = self.config.reference_event_interval - 1;
         self.num_events += 1;
         self.rebuild_book_with_stale_quote(old_mid, self.reference_mid, jump_side);
     }
@@ -240,7 +263,7 @@ impl SimExchange {
         if self.target_mid == self.reference_mid {
             return;
         }
-        if self.tick < self.last_reference_jump_tick + REPRICE_DELAY - 1 {
+        if self.tick < self.last_reference_jump_tick + self.config.reprice_delay - 1 {
             return;
         }
 
@@ -265,7 +288,7 @@ impl SimExchange {
     }
 
     fn rebuild_book(&mut self, mid: Price) {
-        self.book = OrderBook::with_capacity(200_000);
+        self.book = OrderBook::with_capacity(2_000);
 
         for offset in 1..=LEVELS {
             let bid_price = mid.saturating_sub(offset).max(1);
@@ -281,7 +304,7 @@ impl SimExchange {
     }
 
     fn rebuild_book_with_stale_quote(&mut self, old_mid: Price, new_mid: Price, jump_side: Side) {
-        self.book = OrderBook::with_capacity(200_000);
+        self.book = OrderBook::with_capacity(2_000);
         let event_id = self.num_events;
 
         match jump_side {
@@ -323,7 +346,7 @@ impl SimExchange {
                     stale.price,
                     old_mid,
                     new_mid,
-                    REPRICE_DELAY
+                    self.config.reprice_delay
                 );
             }
         }
