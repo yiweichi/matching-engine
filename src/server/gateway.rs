@@ -173,6 +173,38 @@ struct PendingOrder {
     msg: wire::WireOrderMsg,
 }
 
+#[derive(Clone, Copy)]
+enum OrderIntent {
+    Normal,
+    Closing,
+}
+
+impl OrderIntent {
+    fn as_str(self) -> &'static str {
+        match self {
+            OrderIntent::Normal => "normal",
+            OrderIntent::Closing => "closing",
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum TradeClass {
+    Close,
+    Stale,
+    NoStale,
+}
+
+impl TradeClass {
+    fn as_str(self) -> &'static str {
+        match self {
+            TradeClass::Close => "close",
+            TradeClass::Stale => "stale",
+            TradeClass::NoStale => "no_stale",
+        }
+    }
+}
+
 pub fn run_server(args: &ServeArgs) {
     install_shutdown_handlers();
 
@@ -426,6 +458,8 @@ fn process_new_order(exchange: &mut SimExchange, order: &PendingOrder, clients: 
     let side = wire::wire_to_side(msg.side);
     let price = msg.price.round() as u64;
     let qty = msg.qty as Qty;
+    let pre_order_position = clients[order.client_idx].position;
+    let order_intent = classify_order_intent(pre_order_position, side, qty);
 
     clients[order.client_idx].orders_total += 1;
 
@@ -466,6 +500,8 @@ fn process_new_order(exchange: &mut SimExchange, order: &PendingOrder, clients: 
             qty,
             &fills,
             stale_outcome,
+            pre_order_position,
+            order_intent,
         );
     }
 
@@ -567,22 +603,24 @@ fn log_exchange_fills(
     order_qty: Qty,
     fills: &[Fill],
     stale_outcome: Option<StaleOutcome>,
+    pre_order_position: i64,
+    order_intent: OrderIntent,
 ) {
     let l1 = exchange.debug_l1();
-    let kind = match stale_outcome {
-        Some(outcome) if outcome.filled => "stale_fill",
-        Some(_) => "stale_attempt_other_fill",
-        None => "non_stale_fill",
-    };
+    let kind = fill_log_kind(stale_outcome, order_intent);
+    let class = trade_class(stale_outcome, order_intent);
     let stale_event = stale_outcome.map(|outcome| outcome.event_id).unwrap_or(0);
 
     for fill in fills {
         eprintln!(
-            "-------------------[trade] kind={} tick={} client={} order={} side={:?} limit={} order_qty={} fill_price={} fill_qty={} stale_event={} ref={} bid={} ask={}",
+            "------[trade]------ class={} kind={} intent={} tick={} client={} order={} pre_pos={} side={:?} limit={} order_qty={} fill_price={} fill_qty={} stale_event={} ref={} bid={} ask={}",
+            class.as_str(),
             kind,
+            order_intent.as_str(),
             exchange.tick(),
             client_id,
             msg.client_order_id,
+            pre_order_position,
             side,
             limit_price,
             order_qty,
@@ -593,6 +631,38 @@ fn log_exchange_fills(
             l1.bid,
             l1.ask
         );
+    }
+}
+
+fn trade_class(stale_outcome: Option<StaleOutcome>, order_intent: OrderIntent) -> TradeClass {
+    match (stale_outcome, order_intent) {
+        (_, OrderIntent::Closing) => TradeClass::Close,
+        (Some(_), OrderIntent::Normal) => TradeClass::Stale,
+        (None, OrderIntent::Normal) => TradeClass::NoStale,
+    }
+}
+
+fn classify_order_intent(position: i64, side: Side, qty: Qty) -> OrderIntent {
+    let qty = qty as i64;
+    let closes_existing_position = match side {
+        Side::Buy => position < 0 && qty <= -position,
+        Side::Sell => position > 0 && qty <= position,
+    };
+    if closes_existing_position {
+        OrderIntent::Closing
+    } else {
+        OrderIntent::Normal
+    }
+}
+
+fn fill_log_kind(stale_outcome: Option<StaleOutcome>, order_intent: OrderIntent) -> &'static str {
+    match (stale_outcome, order_intent) {
+        (Some(outcome), OrderIntent::Closing) if outcome.filled => "stale_closing_fill",
+        (Some(_), OrderIntent::Closing) => "stale_closing_attempt_other_fill",
+        (None, OrderIntent::Closing) => "closing_fill",
+        (Some(outcome), OrderIntent::Normal) if outcome.filled => "stale_fill",
+        (Some(_), OrderIntent::Normal) => "stale_attempt_other_fill",
+        (None, OrderIntent::Normal) => "non_stale_fill",
     }
 }
 
