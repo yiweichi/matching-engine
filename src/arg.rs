@@ -167,6 +167,20 @@ pub struct ServeArgs {
 
     #[arg(
         long,
+        default_value_t = 50,
+        help = "Reference price jump interval in exchange ticks"
+    )]
+    pub reference_event_interval: u64,
+
+    #[arg(
+        long,
+        default_value_t = 10,
+        help = "Ticks before the target book reprices after a reference jump"
+    )]
+    pub reprice_delay: u64,
+
+    #[arg(
+        long,
         default_value_t = false,
         help = "Debug: log when one exchange loop exceeds the configured tick interval"
     )]

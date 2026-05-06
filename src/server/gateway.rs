@@ -11,7 +11,7 @@ use rand::{Rng, SeedableRng};
 
 use super::wire;
 use crate::arg::ServeArgs;
-use crate::sim::exchange::{SimExchange, StaleOutcome, L1};
+use crate::sim::exchange::{SimExchange, SimExchangeConfig, StaleOutcome, L1};
 
 static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
 const TIE_BREAKER_SEED: u64 = 0x9e37_79b9_7f4a_7c15;
@@ -208,7 +208,10 @@ impl TradeClass {
 pub fn run_server(args: &ServeArgs) {
     install_shutdown_handlers();
 
-    let mut exchange = SimExchange::new();
+    let mut exchange = SimExchange::with_config(SimExchangeConfig {
+        reference_event_interval: args.reference_event_interval,
+        reprice_delay: args.reprice_delay,
+    });
     exchange.set_debug_stale_quotes(args.debug_stale_quotes);
 
     let ref_udp = make_udp_sender();
@@ -233,6 +236,8 @@ pub fn run_server(args: &ServeArgs) {
     let mut ref_seq: u32 = 0;
     let mut md_seq: u32 = 0;
     let mut tie_rng = SmallRng::seed_from_u64(TIE_BREAKER_SEED);
+    let mut pending = Vec::with_capacity(1024);
+    let mut client_order = Vec::with_capacity(64);
 
     let tick_ns = 1_000_000_000u64 / args.tick_rate;
     let tick_interval = Duration::from_nanos(tick_ns);
@@ -242,8 +247,8 @@ pub fn run_server(args: &ServeArgs) {
         args.ref_group, args.ref_port, args.md_group, args.md_port, args.order_port
     );
     eprintln!(
-        "[exchange] tick_rate={}/s  ticks={}",
-        args.tick_rate, args.ticks
+        "[exchange] tick_rate={}/s  ticks={}  reference_event_interval={}  reprice_delay={}",
+        args.tick_rate, args.ticks, args.reference_event_interval, args.reprice_delay
     );
     eprintln!(
         "[exchange] accepting multiple HFT clients on TCP :{}...",
@@ -260,18 +265,21 @@ pub fn run_server(args: &ServeArgs) {
         let l1: L1 = exchange.step();
 
         if l1.valid() {
-            send_reference_snapshot(&ref_udp, ref_addr, &mut ref_seq, &l1);
-            send_target_md_snapshot(&md_udp, md_addr, &mut md_seq, &l1);
+            let timestamp_ns = wire::now_ns();
+            send_reference_snapshot(&ref_udp, ref_addr, &mut ref_seq, &l1, timestamp_ns);
+            send_target_md_snapshot(&md_udp, md_addr, &mut md_seq, &l1, timestamp_ns);
         }
 
         accept_clients(&tcp_listener, &mut clients, &mut next_client_id);
 
-        let mut pending = Vec::new();
-        collect_pending_orders(&mut clients, &mut pending, &mut tie_rng);
-        pending.sort_by_key(|order| order.tie_breaker);
+        pending.clear();
+        collect_pending_orders(&mut clients, &mut pending, &mut client_order, &mut tie_rng);
+        if pending.len() > 1 {
+            pending.sort_by_key(|order| order.tie_breaker);
+        }
 
-        for order in pending {
-            process_order_msg(&mut exchange, &order, &mut clients);
+        for order in &pending {
+            process_order_msg(&mut exchange, order, &mut clients);
         }
 
         archive_disconnected_clients(&mut exchange, &mut clients, &mut finished_clients);
@@ -314,15 +322,20 @@ fn make_udp_sender() -> UdpSocket {
     udp
 }
 
-fn send_reference_snapshot(udp: &UdpSocket, ref_addr: SocketAddr, seq: &mut u32, l1: &L1) {
+fn send_reference_snapshot(
+    udp: &UdpSocket,
+    ref_addr: SocketAddr,
+    seq: &mut u32,
+    l1: &L1,
+    timestamp_ns: u64,
+) {
     if !l1.valid() {
         return;
     }
 
-    let now_ns = wire::now_ns();
     let reference = wire::WireMdReference {
         header: wire::WireMdHeader {
-            timestamp_ns: now_ns,
+            timestamp_ns,
             exchange_tick: l1.tick,
             instrument_id: wire::DEFAULT_INSTRUMENT_ID,
             sequence_num: *seq,
@@ -336,14 +349,20 @@ fn send_reference_snapshot(udp: &UdpSocket, ref_addr: SocketAddr, seq: &mut u32,
     let _ = udp.send_to(unsafe { wire::as_bytes(&reference) }, ref_addr);
 }
 
-fn send_target_md_snapshot(udp: &UdpSocket, md_addr: SocketAddr, seq: &mut u32, l1: &L1) {
+fn send_target_md_snapshot(
+    udp: &UdpSocket,
+    md_addr: SocketAddr,
+    seq: &mut u32,
+    l1: &L1,
+    timestamp_ns: u64,
+) {
     if !l1.valid() {
         return;
     }
 
     let quote = wire::WireMdQuote {
         header: wire::WireMdHeader {
-            timestamp_ns: wire::now_ns(),
+            timestamp_ns,
             exchange_tick: l1.tick,
             instrument_id: wire::DEFAULT_INSTRUMENT_ID,
             sequence_num: *seq,
@@ -401,14 +420,18 @@ fn archive_disconnected_clients(
 fn collect_pending_orders(
     clients: &mut [Client],
     pending: &mut Vec<PendingOrder>,
+    client_order: &mut Vec<usize>,
     tie_rng: &mut SmallRng,
 ) {
-    let mut client_order: Vec<usize> = (0..clients.len()).collect();
-    client_order.shuffle(tie_rng);
+    client_order.clear();
+    client_order.extend(0..clients.len());
+    if client_order.len() > 1 {
+        client_order.shuffle(tie_rng);
+    }
 
-    for client_idx in client_order {
+    let mut tmp = [0u8; 4096];
+    for &client_idx in client_order.iter() {
         let client = &mut clients[client_idx];
-        let mut tmp = [0u8; 4096];
         loop {
             match client.stream.read(&mut tmp) {
                 Ok(0) => {
@@ -426,14 +449,20 @@ fn collect_pending_orders(
             }
         }
 
-        while client.read_buf.len() >= size_of::<wire::WireOrderMsg>() {
-            let msg = unsafe { wire::from_bytes::<wire::WireOrderMsg>(&client.read_buf) };
-            client.read_buf.drain(..size_of::<wire::WireOrderMsg>());
+        let msg_size = size_of::<wire::WireOrderMsg>();
+        let parsed_len = client.read_buf.len() / msg_size * msg_size;
+        let mut offset = 0;
+        while offset < parsed_len {
+            let msg = unsafe { wire::from_bytes::<wire::WireOrderMsg>(&client.read_buf[offset..]) };
             pending.push(PendingOrder {
                 tie_breaker: tie_rng.gen(),
                 client_idx,
                 msg,
             });
+            offset += msg_size;
+        }
+        if parsed_len > 0 {
+            client.read_buf.drain(..parsed_len);
         }
     }
 }
