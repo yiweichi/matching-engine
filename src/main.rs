@@ -26,6 +26,12 @@ fn run_profile(args: &ProfileArgs) {
                     scenarios::profile_passive_insert(d);
                 }
             }
+            Scenario::AddOrderRandomSide => {
+                scenarios::profile_add_order_random_side();
+            }
+            Scenario::AddOrderPredictableSide => {
+                scenarios::profile_add_order_predictable_side();
+            }
             Scenario::AggressiveFill => {
                 for d in values(args.depth, &[100u64, 10_000, 100_000]) {
                     scenarios::profile_aggressive_fill(d);
@@ -146,6 +152,14 @@ fn run_bench(r: &mut Reporter, args: &BenchArgs) {
                     &scenarios::passive_insert(d),
                 );
             }
+        }
+        Some(Scenario::AddOrderRandomSide) => {
+            r.section("Add Order Side Predictability");
+            r.row("random side", &scenarios::add_order_random_side());
+        }
+        Some(Scenario::AddOrderPredictableSide) => {
+            r.section("Add Order Side Predictability");
+            r.row("predictable side", &scenarios::add_order_predictable_side());
         }
         Some(Scenario::AggressiveFill) => {
             r.section("Aggressive Fill (1 lot)");
