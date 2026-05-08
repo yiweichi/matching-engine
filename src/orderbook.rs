@@ -149,15 +149,35 @@ impl OrderBook {
     /// so the hot path never allocates.
     #[inline]
     pub fn add_order(&mut self, order: Order, fills: &mut Vec<Fill>) {
-        let mut remaining = order.qty;
-
         match order.side {
-            Side::Buy => self.match_buy(&order, &mut remaining, fills),
-            Side::Sell => self.match_sell(&order, &mut remaining, fills),
+            Side::Buy => self.add_buy_order(order, fills),
+            Side::Sell => self.add_sell_order(order, fills),
         }
+    }
+
+    /// Submit a buy order through the side-specialized hot path.
+    #[inline]
+    pub fn add_buy_order(&mut self, order: Order, fills: &mut Vec<Fill>) {
+        debug_assert_eq!(order.side, Side::Buy);
+
+        let mut remaining = order.qty;
+        self.match_buy(&order, &mut remaining, fills);
 
         if remaining > 0 && order.order_type == OrderType::Limit {
-            self.place(order.id, order.side, order.price, remaining);
+            self.place_buy(order.id, order.price, remaining);
+        }
+    }
+
+    /// Submit a sell order through the side-specialized hot path.
+    #[inline]
+    pub fn add_sell_order(&mut self, order: Order, fills: &mut Vec<Fill>) {
+        debug_assert_eq!(order.side, Side::Sell);
+
+        let mut remaining = order.qty;
+        self.match_sell(&order, &mut remaining, fills);
+
+        if remaining > 0 && order.order_type == OrderType::Limit {
+            self.place_sell(order.id, order.price, remaining);
         }
     }
 
@@ -285,7 +305,7 @@ impl OrderBook {
                 return;
             }
 
-            self.fill_at_level(Side::Buy, best_ask, order.id, remaining, fills);
+            self.fill_ask_at_level(best_ask, order.id, remaining, fills);
 
             if self.asks.get(&best_ask).is_none_or(|l| l.is_empty()) {
                 self.asks.remove(&best_ask);
@@ -307,7 +327,7 @@ impl OrderBook {
                 return;
             }
 
-            self.fill_at_level(Side::Sell, best_bid, order.id, remaining, fills);
+            self.fill_bid_at_level(best_bid, order.id, remaining, fills);
 
             if self.bids.get(&best_bid).is_none_or(|l| l.is_empty()) {
                 self.bids.remove(&best_bid);
@@ -316,23 +336,16 @@ impl OrderBook {
         }
     }
 
-    /// Walk a single price level, filling against resting orders.
-    /// `taker_side` is the side of the incoming aggressive order.
+    /// Walk a single ask price level for an incoming buy order.
     #[inline]
-    fn fill_at_level(
+    fn fill_ask_at_level(
         &mut self,
-        taker_side: Side,
         price: Price,
         taker_id: OrderId,
         remaining: &mut Qty,
         fills: &mut Vec<Fill>,
     ) {
-        let level = match taker_side {
-            Side::Buy => self.asks.get_mut(&price),
-            Side::Sell => self.bids.get_mut(&price),
-        };
-
-        let level = match level {
+        let level = match self.asks.get_mut(&price) {
             Some(l) => l,
             None => return,
         };
@@ -356,7 +369,56 @@ impl OrderBook {
                 taker_id,
                 price,
                 qty: fill_qty,
-                side: taker_side,
+                side: Side::Buy,
+            });
+
+            if maker_qty == 0 {
+                level.head = maker_next;
+                if maker_next != INVALID {
+                    self.arena.get_mut(maker_next).prev = INVALID;
+                } else {
+                    level.tail = INVALID;
+                }
+                self.arena.dealloc(head_idx);
+                self.locations.remove(&maker_id);
+            }
+        }
+    }
+
+    /// Walk a single bid price level for an incoming sell order.
+    #[inline]
+    fn fill_bid_at_level(
+        &mut self,
+        price: Price,
+        taker_id: OrderId,
+        remaining: &mut Qty,
+        fills: &mut Vec<Fill>,
+    ) {
+        let level = match self.bids.get_mut(&price) {
+            Some(l) => l,
+            None => return,
+        };
+
+        while *remaining > 0 {
+            if level.head == INVALID {
+                return;
+            }
+            let head_idx = level.head;
+
+            let (maker_id, fill_qty, maker_qty, maker_next) = {
+                let maker = self.arena.get_mut(head_idx);
+                let fq = (*remaining).min(maker.qty);
+                maker.qty -= fq;
+                *remaining -= fq;
+                (maker.id, fq, maker.qty, maker.next)
+            };
+
+            fills.push(Fill {
+                maker_id,
+                taker_id,
+                price,
+                qty: fill_qty,
+                side: Side::Sell,
             });
 
             if maker_qty == 0 {
@@ -375,7 +437,7 @@ impl OrderBook {
     // ── Placement ─────────────────────────────────────────────
 
     #[inline]
-    fn place(&mut self, id: OrderId, side: Side, price: Price, qty: Qty) {
+    fn place_buy(&mut self, id: OrderId, price: Price, qty: Qty) {
         let idx = self.arena.alloc(Node {
             id,
             qty,
@@ -383,10 +445,7 @@ impl OrderBook {
             next: INVALID,
         });
 
-        let level = match side {
-            Side::Buy => self.bids.entry(price).or_insert_with(PriceLevel::new),
-            Side::Sell => self.asks.entry(price).or_insert_with(PriceLevel::new),
-        };
+        let level = self.bids.entry(price).or_insert_with(PriceLevel::new);
 
         let old_tail = level.tail;
         if old_tail != INVALID {
@@ -397,20 +456,38 @@ impl OrderBook {
         }
         level.tail = idx;
 
-        match side {
-            Side::Buy => {
-                if self.cached_best_bid.is_none_or(|b| price > b) {
-                    self.cached_best_bid = Some(price);
-                }
-            }
-            Side::Sell => {
-                if self.cached_best_ask.is_none_or(|a| price < a) {
-                    self.cached_best_ask = Some(price);
-                }
-            }
+        if self.cached_best_bid.is_none_or(|b| price > b) {
+            self.cached_best_bid = Some(price);
         }
 
-        self.locations.insert(id, (side, price, idx));
+        self.locations.insert(id, (Side::Buy, price, idx));
+    }
+
+    #[inline]
+    fn place_sell(&mut self, id: OrderId, price: Price, qty: Qty) {
+        let idx = self.arena.alloc(Node {
+            id,
+            qty,
+            prev: INVALID,
+            next: INVALID,
+        });
+
+        let level = self.asks.entry(price).or_insert_with(PriceLevel::new);
+
+        let old_tail = level.tail;
+        if old_tail != INVALID {
+            self.arena.get_mut(old_tail).next = idx;
+            self.arena.get_mut(idx).prev = old_tail;
+        } else {
+            level.head = idx;
+        }
+        level.tail = idx;
+
+        if self.cached_best_ask.is_none_or(|a| price < a) {
+            self.cached_best_ask = Some(price);
+        }
+
+        self.locations.insert(id, (Side::Sell, price, idx));
     }
 }
 
