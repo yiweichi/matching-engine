@@ -203,6 +203,30 @@ fn profile_loop(warmup: u64, iters: u64, mut body: impl FnMut()) {
     }
 }
 
+const PASSIVE_SIDES: [Side; 2] = [Side::Buy, Side::Sell];
+const PASSIVE_PRICES: [Price; 2] = [MID - SPREAD - 200, MID + SPREAD + 200];
+
+#[inline(always)]
+fn next_random_side_idx(state: &mut u64) -> usize {
+    let mut x = *state;
+    x ^= x << 13;
+    x ^= x >> 7;
+    x ^= x << 17;
+    *state = x;
+    (x & 1) as usize
+}
+
+#[inline(always)]
+fn passive_side_order(id: OrderId, side_idx: usize) -> Order {
+    Order {
+        id,
+        side: PASSIVE_SIDES[side_idx],
+        price: PASSIVE_PRICES[side_idx],
+        qty: 10,
+        order_type: OrderType::Limit,
+    }
+}
+
 // ── Scenarios ───────────────────────────────────────────────────
 
 pub fn passive_insert(depth: u64) -> Histogram<u64> {
@@ -228,6 +252,33 @@ pub fn passive_insert(depth: u64) -> Histogram<u64> {
             },
             &mut fills,
         );
+        id += 1;
+    })
+}
+
+pub fn add_order_random_side() -> Histogram<u64> {
+    let mut book = OrderBook::with_capacity((WARMUP + ITERS) as usize);
+    let mut fills = Vec::with_capacity(4);
+    let mut id = 1u64;
+    let mut side_state = 0x9E37_79B9_7F4A_7C15u64;
+
+    timed_loop(WARMUP, ITERS, || {
+        let side_idx = next_random_side_idx(&mut side_state);
+        fills.clear();
+        book.add_order(passive_side_order(id, side_idx), &mut fills);
+        id += 1;
+    })
+}
+
+pub fn add_order_predictable_side() -> Histogram<u64> {
+    let mut book = OrderBook::with_capacity((WARMUP + ITERS) as usize);
+    let mut fills = Vec::with_capacity(4);
+    let mut id = 1u64;
+
+    timed_loop(WARMUP, ITERS, || {
+        let side_idx = (id & 1) as usize;
+        fills.clear();
+        book.add_order(passive_side_order(id, side_idx), &mut fills);
         id += 1;
     })
 }
@@ -562,6 +613,33 @@ pub fn profile_passive_insert(depth: u64) {
             },
             &mut fills,
         );
+        id += 1;
+    });
+}
+
+pub fn profile_add_order_random_side() {
+    let mut book = OrderBook::with_capacity((WARMUP + ITERS) as usize);
+    let mut fills = Vec::with_capacity(4);
+    let mut id = 1u64;
+    let mut side_state = 0x9E37_79B9_7F4A_7C15u64;
+
+    profile_loop(WARMUP, ITERS, || {
+        let side_idx = next_random_side_idx(&mut side_state);
+        fills.clear();
+        book.add_order(passive_side_order(id, side_idx), &mut fills);
+        id += 1;
+    });
+}
+
+pub fn profile_add_order_predictable_side() {
+    let mut book = OrderBook::with_capacity((WARMUP + ITERS) as usize);
+    let mut fills = Vec::with_capacity(4);
+    let mut id = 1u64;
+
+    profile_loop(WARMUP, ITERS, || {
+        let side_idx = (id & 1) as usize;
+        fills.clear();
+        book.add_order(passive_side_order(id, side_idx), &mut fills);
         id += 1;
     });
 }
