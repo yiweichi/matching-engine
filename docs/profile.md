@@ -5,6 +5,15 @@ perf record -F 999 -g -- target/release/matching-engine profile --scenario passi
 perf report
 ```
 
+Profile random vs predictable `add_order` side branches:
+```
+perf stat -e cycles,instructions,branches,branch-misses \
+  target/release/matching-engine profile --scenario add-order-random-side --repeat 2000
+
+perf stat -e cycles,instructions,branches,branch-misses \
+  target/release/matching-engine profile --scenario add-order-predictable-side --repeat 2000
+```
+
 
 Profile with flamegraph:
 ```

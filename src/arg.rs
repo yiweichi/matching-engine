@@ -3,6 +3,8 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
 pub enum Scenario {
     PassiveInsert,
+    AddOrderRandomSide,
+    AddOrderPredictableSide,
     AggressiveFill,
     MultiLevelSweep,
     MarketOrder,
