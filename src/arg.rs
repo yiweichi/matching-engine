@@ -128,6 +128,12 @@ pub struct SimArgs {
     pub max_position: i64,
 }
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
+pub enum OrderPriority {
+    Random,
+    ClientReaction,
+}
+
 #[derive(Debug, Args)]
 pub struct ServeArgs {
     #[arg(
@@ -201,4 +207,12 @@ pub struct ServeArgs {
         help = "Debug: log stale quote expirations only while at least one client is connected"
     )]
     pub debug_stale_expire_when_client: bool,
+
+    #[arg(
+        long,
+        value_enum,
+        default_value = "random",
+        help = "Pending order priority: random or client-reaction"
+    )]
+    pub order_priority: OrderPriority,
 }

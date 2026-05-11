@@ -10,7 +10,7 @@ use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
 
 use super::wire;
-use crate::arg::ServeArgs;
+use crate::arg::{OrderPriority, ServeArgs};
 use crate::sim::exchange::{SimExchange, SimExchangeConfig, StaleOutcome, L1};
 
 static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
@@ -169,6 +169,8 @@ impl Client {
 #[derive(Clone, Copy)]
 struct PendingOrder {
     tie_breaker: u64,
+    source_exchange_tick: u64,
+    client_reaction_ns: u64,
     client_idx: usize,
     msg: wire::WireOrderMsg,
 }
@@ -247,8 +249,8 @@ pub fn run_server(args: &ServeArgs) {
         args.ref_group, args.ref_port, args.md_group, args.md_port, args.order_port
     );
     eprintln!(
-        "[exchange] tick_rate={}/s  ticks={}  reference_event_interval={}  reprice_delay={}",
-        args.tick_rate, args.ticks, args.reference_event_interval, args.reprice_delay
+        "[exchange] tick_rate={}/s  ticks={}  reference_event_interval={}  reprice_delay={}  order_priority={:?}",
+        args.tick_rate, args.ticks, args.reference_event_interval, args.reprice_delay, args.order_priority
     );
     eprintln!(
         "[exchange] accepting multiple HFT clients on TCP :{}...",
@@ -279,7 +281,12 @@ pub fn run_server(args: &ServeArgs) {
         pending.clear();
         collect_pending_orders(&mut clients, &mut pending, &mut client_order, &mut tie_rng);
         if pending.len() > 1 {
-            pending.sort_by_key(|order| order.tie_breaker);
+            sort_pending_orders(&mut pending, args.order_priority);
+            if args.debug_stale_quotes
+                && matches!(args.order_priority, OrderPriority::ClientReaction)
+            {
+                log_pending_priority(&pending, &clients);
+            }
         }
 
         for order in &pending {
@@ -465,6 +472,8 @@ fn collect_pending_orders(
             let msg = unsafe { wire::from_bytes::<wire::WireOrderMsg>(&client.read_buf[offset..]) };
             pending.push(PendingOrder {
                 tie_breaker: tie_rng.gen(),
+                source_exchange_tick: msg.source_exchange_tick,
+                client_reaction_ns: msg.client_reaction_ns,
                 client_idx,
                 msg,
             });
@@ -473,6 +482,36 @@ fn collect_pending_orders(
         if parsed_len > 0 {
             client.read_buf.drain(..parsed_len);
         }
+    }
+}
+
+fn sort_pending_orders(pending: &mut [PendingOrder], order_priority: OrderPriority) {
+    match order_priority {
+        OrderPriority::Random => pending.sort_by_key(|order| order.tie_breaker),
+        OrderPriority::ClientReaction => pending.sort_by_key(|order| {
+            (
+                order.source_exchange_tick,
+                order.client_reaction_ns,
+                order.tie_breaker,
+            )
+        }),
+    }
+}
+
+fn log_pending_priority(pending: &[PendingOrder], clients: &[Client]) {
+    for (rank, order) in pending.iter().enumerate() {
+        let client_id = clients
+            .get(order.client_idx)
+            .map(|client| client.id)
+            .unwrap_or_default();
+        eprintln!(
+            "[exchange] priority rank={} client={} source_tick={} reaction_ns={} tie={}",
+            rank,
+            client_id,
+            order.source_exchange_tick,
+            order.client_reaction_ns,
+            order.tie_breaker
+        );
     }
 }
 
