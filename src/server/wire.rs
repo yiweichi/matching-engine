@@ -68,6 +68,8 @@ pub struct WireOrderMsg {
     pub price: f64,
     pub qty: u32,
     pub _pad2: u32,
+    pub source_exchange_tick: u64,
+    pub client_reaction_ns: u64,
 }
 
 #[repr(C)]
@@ -90,7 +92,7 @@ const _: () = {
     assert!(std::mem::size_of::<WireMdHeader>() == 32);
     assert!(std::mem::size_of::<WireMdQuote>() == 56);
     assert!(std::mem::size_of::<WireMdReference>() == 48);
-    assert!(std::mem::size_of::<WireOrderMsg>() == 32);
+    assert!(std::mem::size_of::<WireOrderMsg>() == 48);
     assert!(std::mem::size_of::<WireExecReport>() == 40);
 };
 
