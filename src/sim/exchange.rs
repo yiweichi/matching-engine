@@ -4,8 +4,8 @@ const HALF_SPREAD: Price = 1;
 const LEVELS: Price = 8;
 const TOP_LEVEL_QTY: Qty = 1;
 const DEEP_LEVEL_QTY: Qty = 250;
-pub const DEFAULT_REFERENCE_EVENT_INTERVAL: u64 = 50;
-pub const DEFAULT_REPRICE_DELAY: u64 = 10;
+pub const DEFAULT_REFERENCE_EVENT_INTERVAL: u64 = 100;
+pub const DEFAULT_REPRICE_DELAY: u64 = 50;
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy)]
